@@ -1,0 +1,8 @@
+build/**
+.history/**
+.cache/**
+.config.yaml
+CMakeFiles/**
+.claude/**
+.serena/**
+.Data/**

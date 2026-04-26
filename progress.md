@@ -1,0 +1,248 @@
+# Progress
+
+## 2026-04-21
+
+- 读取并对齐：
+  - `AGENTS.md`
+  - `xrobot-agent-context.md`
+  - `.Doc/2026-04-21_fan_in_fan_out_future_migration_roadmap.md`
+- 扫描当前仓库的 `App/` 与 `Modules/`，确认：
+  - `TelemetryRole` 已有最小 health tree
+  - `DecisionRole` 已有最小 degraded mode
+  - `InputRole` 已有 `remote/master_machine` 双源输入
+  - `CANBridge` 仍停留在在线状态骨架
+- 扫描 donor `basic_framework-master` 中的：
+  - `daemon`
+  - `can_comm`
+  - `master_machine/master_process`
+  - `referee`
+- 输出新的执行计划文档：
+  - `.Doc/2026-04-21_phase4_phase6_fan_in_fan_out_execution_plan.md`
+- 继续核对当前代码与执行计划的一致性，发现：
+  - `App/Runtime/HealthAggregator.hpp` 已存在
+  - `App/Runtime/DegradedPolicy.hpp` 已存在
+  - `App/Runtime/HealthPolicy_compile_test.cpp` 已存在
+- 新结论：
+  - Phase 4 当前不再是“先创建健康/降级 helper”，而是“把已存在 helper 接入 live roles”
+  - 现有执行计划需要 rebase，优先级应收敛为：
+    1. `TelemetryRole / DecisionRole` 接线统一策略
+    2. `InputRole` 多输入源仲裁升级
+    3. `CANBridge / can_comm` 真实桥接闭环
+- 完成 `Batch A` 代码接线：
+  - `App/Roles/TelemetryRole.cpp` 已改为通过 `HealthAggregator` 统一产出 `system_health`
+  - `App/Roles/DecisionRole.cpp/.hpp` 已改为通过 `DegradedPolicy` 统一消费降级动作
+- 完成验证：
+  - `cmake --build --preset Debug` 通过
+  - 当前仍保留 BMI088 既有 warning：`GetGyroLSB()` / `GetAcclLSB()` 非 void 函数缺少返回
+- 新增 `rmpp-master` 调研：
+  - 扫描 `rmpp/lib/rc/*`
+  - 扫描 `rmpp/lib/robot/Robot.*`
+  - 扫描 `rmpp/lib/robot/Sentry.*`
+  - 扫描 `rmpp/lib/mavlink/Mavlink.*`
+- 新结论：
+  - `rmpp-master` 的关键价值不在“兵种逻辑”，而在“按控制域拆 lane”
+  - 当前仓库的 `InputRole` 应从 whole-source switch 升级为 domain-aware arbitration
+  - 未来 `automation` 输入必须在结构上预留，而不是临时插特判
+- 输出调研文档：
+  - `.Doc/2026-04-21_rmpp_input_chain_fan_in_fan_out_research.md`
+- 追加一轮 fan in / fan out 并行研究（N researchers -> synthesizer）：
+  - Researcher A：设备级输入 fan-in（`FSi6X / VT13 / RC`）
+  - Researcher B：整机级按域 fan-in/fan-out（`Robot`）
+  - Researcher C：automation / host assist / 外部辅助输入（`Mavlink / Sentry`）
+- 综合结论：
+  - 当前仓库应先冻结“来源字典 + 控制域字典 + 仲裁原因字典”
+  - Batch B 第一版应采用“可解释的单域优先级仲裁”，暂不直接引入 rmpp 式多来源求和
+  - `host` 应拆成 `host direct / host assist`
+  - `aim` 应拆成 `mode / speed / angle`
+  - `fire` 应拆成 `enable / modulation`
+- 用户进一步纠偏后，已收缩目标：
+  - 不再研究整条控制链重构
+  - 只细化“多遥控器接入方案”
+- 收缩后的新结论：
+  - rmpp 可借鉴的是“独立设备适配器 + 薄聚合层”
+  - 当前仓库第一版推荐在 `InputRole` 内完成多遥控器接入
+  - `RemoteControl` 只做最小必要改造以允许多实例共存
+  - 第一版合并策略推荐“单设备独占 + 主备切换”
+- 使用 `GPT-5.4 / medium` 子代理完成两类代码级草案：
+  - `RemoteControl` 多实例化接口草案
+  - `InputRole` 主备切换策略草案
+- 已完成第一版实现：
+  - `Modules/RemoteControl/RemoteControl.hpp`
+  - `App/Roles/InputRole.hpp`
+  - `App/Roles/InputRole.cpp`
+- 当前实现状态：
+  - `RemoteControl` 支持实例级 Topic/线程名
+  - `InputRole` 支持 primary/secondary remote 的单设备独占选择
+  - secondary remote 默认关闭，避免硬绑当前不存在的空闲 UART
+- 已验证：
+  - `cmake --build --preset Debug` 通过
+  - 仍保留 BMI088 既有 warning：`GetGyroLSB()` / `GetAcclLSB()` 非 void 函数缺少返回
+- 用户下一阶段目标已切换为：
+  - `RemoteControl.hpp -> DT7.hpp`
+  - 移植 `VT13.hpp`
+  - 保持 `DT7State / VT13State` 分开
+- 已输出新的迁移计划：
+  - `.Doc/2026-04-21_dt7_vt13_dual_remote_migration_plan.md`
+- 已使用 `GPT-5.4 / medium` 子代理完成两类实现：
+  - 新增 `Modules/RemoteControl/DT7.hpp`
+  - 新增 `Modules/RemoteControl/VT13.hpp`
+- 主线程已完成集成：
+  - `InputRole` 改为依赖 `DT7.hpp`
+  - 删除旧 `Modules/RemoteControl/RemoteControl.hpp`
+  - 新增 `App/Runtime/RemoteProtocol_compile_test.cpp`
+- 已验证：
+  - `cmake --build --preset Debug` 通过
+  - `VT13.hpp` 已真正进入编译链
+  - 仍保留 BMI088 既有 warning：`GetGyroLSB()` / `GetAcclLSB()` 非 void 函数缺少返回
+- 已继续完成 VT13 的板级启用：
+  - `USART2` 初始化已加入 `Core/Src/usart.c` 与 `Core/Inc/usart.h`
+  - `Core/Src/stm32f4xx_it.c` 已补 `USART2` / `DMA1_Stream5` 中断处理
+  - `Core/Src/main.c` 已调用 `MX_USART2_UART_Init()`
+  - `User/app_main.cpp` 已注册 `uart_vt13`
+  - `App/Runtime/AppRuntime.hpp/.cpp` 已实例化 `VT13`
+- 当前状态：
+  - `VT13` 已挂到 `USART2`
+  - `VT13State` 已在运行时发布私有 topic
+  - 当前已开始由 `InputRole` 最小消费 `VT13State`
+- 已知后续事项：
+  - `.ioc` 仍需同步更新，否则未来重新生成代码会丢失 `USART2` 配置
+- 已继续完成边界修正与接线：
+  - `AppRuntime` 统一持有 `DT7 primary / optional DT7 secondary / VT13`
+  - `InputRole` 不再实例化输入模块，只消费 state topic
+  - `VT13` 已加入人工输入选择链，优先级为 `DT7 primary > DT7 secondary > VT13 > none`
+  - `master_machine` 仍在人工输入选择之后做最终覆盖
+- 当前构建验证：
+  - 再次执行 `cmake --build --preset Debug`
+  - 当前返回 `ninja: no work to do.`
+
+## 2026-04-22
+
+- 重新读取并对齐：
+  - `.Doc/road_map.md`
+  - `task_plan.md`
+  - `progress.md`
+  - `findings.md`
+  - `xrobot-agent-context.md`
+- 重新扫描当前 `App/` 与 `Modules/` 结构，确认：
+  - `Referee / MasterMachine / DT7 / VT13 / CANBridge / DJIMotor` 均已实际进入当前代码基线
+  - `HealthAggregator / DegradedPolicy` 已存在且已经完成第一轮接线
+  - 旧执行卡片里“先创建模块/先创建 helper”的描述已经过期
+- 新结论：
+  - 后续迁移不应再沿用旧的“Phase 2-5 创建骨架”计划
+  - 当前真正剩余的主线应重排为：
+    1. `SystemHealth` 契约补齐
+    2. `InputRole` 边界收口
+    3. `CANBridge` 真实协议闭环
+    4. `referee` 第二轮稳定语义
+    5. bring-up 清理与 `.ioc` 同步
+- 新增执行计划文档：
+  - `.Doc/2026-04-22_remaining_fan_in_fan_out_execution_plan.md`
+- 已同步更新：
+  - `task_plan.md`
+  - `findings.md`
+  - `progress.md`
+- 按用户要求继续使用 subagents 并行细化后续批次：
+  - Subagent A：`Batch 1 / Batch 2`
+  - Subagent B：`Batch 3 / Batch 4`
+  - Subagent C：`Batch 5 + 验证矩阵`
+- 主线程对 subagent 结果做了二次复核，确认并写回的关键事实包括：
+  - `HealthAggregator` 已有 `primary_reason / control_action_mask`，但 `SystemHealth` 还未承载
+  - `HealthPolicyConfig.hpp` 与 `SystemHealth.hpp` 存在潜在 include 循环风险
+  - `basic_framework.ioc` 当前没有 `USART2`
+  - `Core/Src/main.c` 当前已调用 `MX_USART2_UART_Init()`
+  - `Core/Src/usart.c` 当前对 `USART2 / USART3` 都使用了运行期强制收口到 `UART_MODE_RX` 的 workaround
+  - `Core/Src/dma.c` 当前未检索到 `DMA1_Stream5` / `DMA1_Stream5_IRQn`
+- 已将这些细化结果收口进：
+  - `.Doc/2026-04-22_remaining_fan_in_fan_out_execution_plan.md`
+- 已继续按新计划执行实现：
+  - `Batch 3` 已由 `GPT-5.4-Medium` subagent 落地最小 heartbeat 协议闭环
+  - `Batch 4` 已由 `GPT-5.4-Medium` subagent 落地 `RawStateCache -> DeriveStableState`
+  - `Batch 5` 当前由主线程完成 first-pass 收口：`.ioc` 回填 `USART2` 最小存在配置、README 同步 UART/别名事实、保留再生成回归门说明
+- 已继续推进 `Batch 6`：
+  - 先按 `N researchers -> synthesizer` 完成 `DecisionRole / TelemetryRole / Referee` 三路研究
+  - 随后由 `GPT-5.4-Medium` implementer 落地 `RefereeConstraintView`
+  - 主线程已补一轮 review 修正：离线时 `RefereeConstraintView` 的 gate 摘要位不再错误地全部置 active
+- `Batch 6` 当前结果：
+  - 新增 `App/Runtime/RefereeConstraintView.hpp`
+  - 新增 `App/Runtime/RefereeConstraintView_compile_test.cpp`
+  - `DecisionRole.cpp` 已改为消费 `RefereeConstraintView`
+  - `TelemetryRole.cpp` 已在 `SystemHealth` 中补充 `referee_match_gate_active / referee_fire_gate_active / referee_power_gate_active`
+  - `SystemHealth.hpp` 已同步补字段
+- 当前构建验证：
+  - 再次执行 `cmake --build --preset Debug`
+  - 成功链接 `basic_framework.elf`
+- 已继续推进 `Batch 7`：
+  - 先完成 `CANBridge`、`TelemetryRole / SystemHealth`、`Health / Decision` 三路 `N researchers -> synthesizer` 研究
+  - 随后主线程直接落地最小 bridge 摘要折叠层
+- `Batch 7` 当前结果：
+  - 新增 `App/Runtime/CANBridgeHealthView.hpp`
+  - 新增 `App/Runtime/CANBridgeHealthView_compile_test.cpp`
+  - `TelemetryRole.cpp` 已改为通过 `CANBridgeHealthView` 折叠 `CANBridgeState`
+  - `SystemHealth.hpp` 已新增 `can_bridge_degraded`
+  - 当前继续保持：`CANBridgeState` 的计数器、时间戳、序号未进入公共契约
+- 当前构建验证：
+  - 再次执行 `cmake --build --preset Debug`
+  - 成功链接 `basic_framework.elf`
+- 已继续推进 `Batch 8`：
+  - 先完成 `MasterMachine / InputRole / BridgeConfig / DecisionRole` 的当前协同链复核
+  - 按“先策略显式化，再决定是否扩功能”的原则，先落最小协同视图
+- `Batch 8` 当前结果：
+  - 新增 `App/Runtime/MasterMachineCoordinationView.hpp`
+  - 新增 `App/Runtime/MasterMachineCoordinationView_compile_test.cpp`
+  - `BridgeConfig.hpp` 已新增 `MasterMachineIngressMode`
+  - `InputRole.cpp` 已改为通过 `MasterMachineCoordinationView` 决定 manual override 是否激活
+  - `TelemetryRole.cpp` 已改为通过 `MasterMachineCoordinationView` 提供 `master_machine_required`
+  - 当前显式冻结语义为：`manual override only`，且默认 `master_machine_required = false`
+- 当前构建验证：
+  - 再次执行 `cmake --build --preset Debug`
+  - 成功链接 `basic_framework.elf`
+- 已继续推进 donor 应用控制语义吸收主线：
+  - `ChassisRole` 已开始消费 `gimbal_state`，支持 `follow gimbal` 模式下的偏角投影
+  - `GimbalRole` 已接入 `pitch_motor`，完成 pitch 真实执行链
+  - `ShootRole` 已接入弹速映射、热量摘要和保守卡弹恢复状态机
+  - 新增 `ShootControlHelpers` 与 compile test，冻结当前弹速映射与 heat 口径
+- 当前构建验证：
+  - 再次执行 `cmake --build --preset Debug`
+  - 成功链接 `basic_framework.elf`
+- 已继续沿顺序深化 `ChassisRole`：
+  - 新增 `ChassisControlHelpers.hpp`
+  - 新增 `ChassisControlHelpers_compile_test.cpp`
+  - `ChassisRole` 已把 donor 的 `stop / follow gimbal / spin` 底盘模式语义收口到 helper，并通过 `gimbal_state` 真正驱动 `follow gimbal`
+- 当前构建验证：
+  - 再次执行 `cmake --build --preset Debug`
+  - 成功链接 `basic_framework.elf`
+- 已按“主线程定边界 + subagent 执行 + 主线程收口”的方式继续深化 `ShootRole`：
+  - `ShootControlHelpers` 已新增 single/burst 的 shot count、cadence、dead time helper
+  - `ShootRole` 已增加 `next_single_step_allowed_ms_`，single/burst 按住不放时不再重复触发
+  - jam recovery 期间的 `loader_mode / loader_active / fire_enable` 语义已更可解释
+- 当前构建验证：
+  - 再次执行 `cmake --build --preset Debug`
+  - 成功链接 `basic_framework.elf`
+- 已按“主线程定边界 + subagent 执行 + 主线程收口”的方式继续推进 `ChassisRole` 的更完整状态估计：
+  - 新增 `ChassisStateEstimator.hpp`
+  - 新增 `ChassisStateEstimator_compile_test.cpp`
+  - `ChassisRole` 已从“轮反馈有效就反解，否则直接跳命令”切到 estimator 驱动
+  - `estimated_vx / estimated_vy / feedback_wz / yaw` 现在都有统一的估计与退化路径
+- 当前构建验证：
+  - 再次执行 `cmake --build --preset Debug`
+  - 成功链接 `basic_framework.elf`
+- 下一步若进入 `super_cap`，需要先等待用户补充约束事项，再开始规划与实现；当前尚未启动任何 `super_cap` 代码改动
+- 用户已补充 `super_cap` 约束事项：
+  - 协议源固定为 `Chassis/modules/super_cap`
+  - 接到 `CAN1`
+  - 当前阶段只做简单通信模块
+  - 当前阶段先把数据读出来，不接入控制链路
+- 已据此完成 `super_cap` 的 `Fan in / Fan out` 规划，并写回主计划文档；当前仍未启动 `super_cap` 代码实现
+- 已继续按“主线程定边界 + subagent 执行 + 主线程收口”的方式推进 `super_cap` 实现：
+  - `Modules/SuperCap/SuperCap.hpp` 已提供 donor 协议适配与 `CAN1` 收包
+  - `App/Runtime/SuperCapProtocol_compile_test.cpp` 已锁定 donor 协议布局
+  - `AppRuntime` 已实例化 `SuperCap`
+  - `TelemetryRole` 已订阅 `SuperCapState`
+  - `SystemHealth.supercap_online` 已进入运行链
+- 当前构建验证：
+  - 再次执行 `cmake --build --preset Debug`
+  - 成功链接 `basic_framework.elf`
+- 已进入 `Batch 9`：
+  - 先完成 donor 剩余内容的目录扫描与现有文档回顾
+  - 再按 `application`、系统能力模块、外围/外设模块 三路做 `N researchers -> synthesizer`
+  - 当前已完成 donor 二次裁剪结论，并写回主计划文档
