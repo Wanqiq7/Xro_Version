@@ -43,7 +43,7 @@ class ChassisController : public ControllerBase {
   using WheelSpeedArray = std::array<float, 4>;
 
   void PullTopicData();
-  void UpdateWheelControl();
+  void UpdateForceControl(const RefereeConstraintView& referee);
   void UpdateChassisState(LibXR::MicrosecondTimestamp now_us);
   void SendSuperCapCommand(const RefereeConstraintView& referee);
 
@@ -58,16 +58,25 @@ class ChassisController : public ControllerBase {
   RefereeState referee_state_{};
   SuperCapState super_cap_state_{};
   WheelMotorArray wheel_motors_;
-  WheelSpeedArray target_wheel_speed_radps_{0.0f, 0.0f, 0.0f, 0.0f};
   LibXR::MicrosecondTimestamp last_estimate_update_us_ = 0;
+  LibXR::MicrosecondTimestamp last_force_update_us_ = 0;
   VelocityEstimateState estimate_state_{};
   bool output_enabled_ = false;
   Config::MecanumChassisConfig actuator_config_ = Config::kMecanumChassisConfig;
   Config::ChassisPowerLimiterConfig power_limiter_config_ =
       Config::kChassisPowerLimiterConfig;
+  Config::ChassisForceControlConfig force_config_ =
+      Config::kChassisForceControlConfig;
   ChassisPowerLimiter power_limiter_{};
   SuperCap* super_cap_ = nullptr;
   std::uint32_t super_cap_cmd_counter_ = 0;
+
+  LibXR::PID<float> force_x_pid_;
+  LibXR::PID<float> force_y_pid_;
+  LibXR::PID<float> torque_z_pid_;
+  VelocityEstimateState force_estimate_state_{};
+  std::array<float, 4> target_wheel_omega_radps_{};
+  std::array<float, 4> wheel_tau_ref_nm_{};
 
   LibXR::Topic::ASyncSubscriber<RobotMode> robot_mode_subscriber_;
   LibXR::Topic::ASyncSubscriber<GimbalState> gimbal_state_subscriber_;

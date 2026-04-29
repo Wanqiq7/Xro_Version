@@ -23,6 +23,7 @@ class ChassisPowerLimiter {
     const SuperCapState& super_cap;
     const WheelSpeedArray& current_wheel_speed_radps;
     const WheelSpeedArray& target_wheel_speed_radps;
+    const WheelSpeedArray& wheel_tau_ref_nm;
     const WheelSpeedArray& current_cmd_raw;
     const WheelSpeedArray& motor_speed_rpm;
   };
@@ -30,6 +31,7 @@ class ChassisPowerLimiter {
   struct Output {
     MotionCommand command{};
     WheelSpeedArray target_wheel_speed_radps{0.0f, 0.0f, 0.0f, 0.0f};
+    WheelSpeedArray limited_wheel_tau_ref_nm{0.0f, 0.0f, 0.0f, 0.0f};
     ChassisPowerAllocation motor_power_allocation{};
     float motion_scale = 1.0f;
     float active_power_limit_w = 0.0f;
@@ -46,6 +48,7 @@ class ChassisPowerLimiter {
     Output output{};
     output.command = input.command;
     output.target_wheel_speed_radps = input.target_wheel_speed_radps;
+    output.limited_wheel_tau_ref_nm = input.wheel_tau_ref_nm;
 
     const float desired_scale = ResolveDesiredScale(input);
     const float scale = UpdateFilteredScale(desired_scale);
@@ -63,6 +66,7 @@ class ChassisPowerLimiter {
 
     ScaleCommand(output.command, scale);
     ScaleWheelTargets(output.target_wheel_speed_radps, scale);
+    ScaleWheelTorques(output.limited_wheel_tau_ref_nm, scale);
 
     output.command.power_limited = output.power_limited;
     output.command.chassis_power_limit_w = output.active_power_limit_w;
@@ -210,6 +214,13 @@ class ChassisPowerLimiter {
                                 float scale) {
     for (auto& wheel_speed : target_wheel_speed_radps) {
       wheel_speed *= scale;
+    }
+  }
+
+  static void ScaleWheelTorques(WheelSpeedArray& wheel_tau_ref_nm,
+                                float scale) {
+    for (auto& tau : wheel_tau_ref_nm) {
+      tau *= scale;
     }
   }
 

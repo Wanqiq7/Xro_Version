@@ -48,6 +48,52 @@ struct MecanumChassisConfig {
 
 inline constexpr MecanumChassisConfig kMecanumChassisConfig{};
 
+// 底盘力控 PID 配置（底盘级 3 个 PID，替代原 4 路轮速 PID）
+struct ChassisForceControlPidConfig {
+  LibXR::PID<float>::Param force_x{
+      .p = 525.0f,
+      .i = 0.0f,
+      .d = 0.0f,
+      .i_limit = 0.0f,
+      .out_limit = 200.0f,
+  };
+  LibXR::PID<float>::Param force_y{
+      .p = 625.0f,
+      .i = 0.0f,
+      .d = 0.0f,
+      .i_limit = 0.0f,
+      .out_limit = 200.0f,
+  };
+  LibXR::PID<float>::Param torque_z{
+      .p = 80.0f,
+      .i = 0.0f,
+      .d = 0.0f,
+      .i_limit = 0.0f,
+      .out_limit = 50.0f,
+  };
+};
+
+// Stribeck 摩擦补偿配置
+struct ChassisFrictionConfig {
+  float dynamic_tau_nm = 0.15f;
+  float omega_threshold_radps = 2.0f;
+  float speed_feedback_gain = 0.05f;
+};
+
+// 底盘力控完整配置
+struct ChassisForceControlConfig {
+  float max_control_force_n = 200.0f;
+  float max_control_torque_nm = 50.0f;
+  float max_wheel_tau_ref_nm = 3.0f;
+  float torque_constant_nm_per_a = 0.3f;
+  float velocity_lpf_alpha = 0.3f;
+  float torque_feedforward_coeff = 0.5f;
+  ChassisForceControlPidConfig pid{};
+  ChassisFrictionConfig friction{};
+};
+
+inline constexpr ChassisForceControlConfig kChassisForceControlConfig{};
+
 struct ChassisPowerLimiterConfig {
   float stop_scale = 0.0f;
   float low_power_scale = 0.35f;
@@ -83,18 +129,10 @@ inline constexpr DJIMotorGroupConfig kChassisMotorGroupConfig{
     .command_frame_id = 0x200,
 };
 
+// 力控模式下 DJIMotor 使用 kCurrent 外环，内部速度/角度 PID 不再需要
 inline constexpr DJIMotorPidConfig kChassisWheelPid{
     .current = LibXR::PID<float>::Param{},
-    .speed =
-        LibXR::PID<float>::Param{
-            .k = 1.0f,
-            .p = 12.0f,
-            .i = 1.2f,
-            .d = 0.0f,
-            .i_limit = 3000.0f,
-            .out_limit = 16000.0f,
-            .cycle = false,
-        },
+    .speed = LibXR::PID<float>::Param{},
     .angle = LibXR::PID<float>::Param{},
 };
 
@@ -112,7 +150,7 @@ constexpr DJIMotorConfig MakeChassisWheelMotorConfig(
       .ecd_to_deg = 360.0f / 8192.0f,
       .max_command_current = 16000.0f,
       .feedback_timeout_ms = 100,
-      .default_outer_loop = DJIMotorOuterLoop::kSpeed,
+      .default_outer_loop = DJIMotorOuterLoop::kCurrent,
       .pid = kChassisWheelPid,
   };
 }

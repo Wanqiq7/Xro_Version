@@ -275,12 +275,44 @@ std::array<float, kWheelCount> ReadWheelRotorSpeedRpm(
   return motor_speed_rpm;
 }
 
-void ApplyWheelTargets(
+constexpr float TorqueToCurrentRaw(float torque_nm, float torque_constant) {
+  constexpr float kCurrentRawPerAmpere = 16384.0f / 20.0f;
+  return torque_nm / torque_constant * kCurrentRawPerAmpere;
+}
+
+VelocityEstimateState EstimateChassisVelocityForce(
+    const std::array<float, kWheelCount>& wheel_speed_radps,
+    const Config::ChassisForceControlConfig& config,
+    const Config::MecanumChassisConfig& actuator_config,
+    const VelocityEstimateState& filtered) {
+  const auto instant =
+      SolveBodyVelocityFromWheelSpeed(wheel_speed_radps, actuator_config);
+  const float alpha = config.velocity_lpf_alpha;
+  return VelocityEstimateState{
+      .vx_mps = alpha * instant.vx_mps + (1.0f - alpha) * filtered.vx_mps,
+      .vy_mps = alpha * instant.vy_mps + (1.0f - alpha) * filtered.vy_mps,
+      .wz_radps =
+          alpha * instant.wz_radps + (1.0f - alpha) * filtered.wz_radps,
+  };
+}
+
+constexpr float CalculateFrictionCompensation(
+    float target_omega_radps, float actual_omega_radps,
+    const Config::ChassisFrictionConfig& config) {
+  const float tau = config.dynamic_tau_nm;
+  const float thresh = config.omega_threshold_radps;
+  if (target_omega_radps > thresh) return tau;
+  if (target_omega_radps < -thresh) return -tau;
+  if (thresh > 0.0f) return actual_omega_radps / thresh * tau;
+  return 0.0f;
+}
+
+void ApplyWheelTorques(
     const std::array<DJIMotor*, kWheelCount>& wheel_motors,
-    const std::array<float, kWheelCount>& target_wheel_speed_radps,
-    bool output_enabled) {
-  for (std::size_t index = 0; index < kWheelCount; ++index) {
-    auto* motor = wheel_motors[index];
+    const std::array<float, kWheelCount>& wheel_tau_ref_nm, bool output_enabled,
+    float torque_constant) {
+  for (std::size_t i = 0; i < kWheelCount; ++i) {
+    auto* motor = wheel_motors[i];
     if (motor == nullptr) {
       continue;
     }
@@ -288,10 +320,10 @@ void ApplyWheelTargets(
       motor->Stop();
       continue;
     }
-    motor->SetOuterLoop(DJIMotorOuterLoop::kSpeed);
-    motor->ChangeFeed(DJIMotorOuterLoop::kSpeed, DJIMotorFeedbackSource::kMotor);
+    motor->SetOuterLoop(DJIMotorOuterLoop::kCurrent);
     motor->Enable();
-    motor->SetReference(target_wheel_speed_radps[index] * kRadpsToDegps);
+    motor->SetReference(
+        TorqueToCurrentRaw(wheel_tau_ref_nm[i], torque_constant));
   }
 }
 
@@ -318,6 +350,9 @@ ChassisController::ChassisController(LibXR::ApplicationManager& appmgr,
           &rear_right_motor,
       },
       super_cap_(&super_cap),
+      force_x_pid_(force_config_.pid.force_x),
+      force_y_pid_(force_config_.pid.force_y),
+      torque_z_pid_(force_config_.pid.torque_z),
       robot_mode_subscriber_(robot_mode_topic),
       gimbal_state_subscriber_(gimbal_state_topic),
       ins_state_subscriber_(AppConfig::kInsStateTopicName, &app_topic_domain),
@@ -333,8 +368,7 @@ ChassisController::ChassisController(LibXR::ApplicationManager& appmgr,
     if (motor == nullptr) {
       continue;
     }
-    motor->SetOuterLoop(DJIMotorOuterLoop::kSpeed);
-    motor->ChangeFeed(DJIMotorOuterLoop::kSpeed, DJIMotorFeedbackSource::kMotor);
+    motor->SetOuterLoop(DJIMotorOuterLoop::kCurrent);
     motor->Stop();
   }
 }
@@ -368,34 +402,107 @@ void ChassisController::PullTopicData() {
   }
 }
 
-void ChassisController::UpdateWheelControl() {
-  const RefereeConstraintView referee_constraints =
-      BuildRefereeConstraintView(referee_state_);
-  const bool has_yaw_feedback = ins_state_.online && ins_state_.gyro_online;
-  applied_motion_command_ = BuildAppliedMotionCommand(
-      robot_mode_, motion_command_, actuator_config_,
-      ins_state_.yaw_deg, has_yaw_feedback, gimbal_state_);
-  const auto requested_wheel_speed_radps =
+void ChassisController::UpdateForceControl(
+    const RefereeConstraintView& referee_constraints) {
+  // Step 1: 逆运动学
+  target_wheel_omega_radps_ =
       SolveWheelTargets(applied_motion_command_, actuator_config_);
+
+  // Step 2: 读取反馈
   const auto current_wheel_speed_radps = ReadWheelSpeedRadps(wheel_motors_);
   const auto current_cmd_raw = ReadWheelCurrentCommandRaw(wheel_motors_);
   const auto motor_speed_rpm = ReadWheelRotorSpeedRpm(wheel_motors_);
+
+  // Step 3: 正运动学 + LPF 速度估计
+  force_estimate_state_ = EstimateChassisVelocityForce(
+      current_wheel_speed_radps, force_config_, actuator_config_,
+      force_estimate_state_);
+
+  // Step 4: 底盘级力 PID
+  const float target_vx = applied_motion_command_.vx_mps;
+  const float target_vy = applied_motion_command_.vy_mps;
+  const float target_wz = applied_motion_command_.wz_radps;
+
+  output_enabled_ = IsChassisReady(robot_mode_) &&
+                    applied_motion_command_.motion_mode !=
+                        MotionModeType::kStop;
+
+  float force_x = 0.0f;
+  float force_y = 0.0f;
+  float torque_z = 0.0f;
+
+  if (output_enabled_) {
+    const auto now_us = LibXR::Timebase::GetMicroseconds();
+    const float dt_s =
+        last_force_update_us_ != 0
+            ? (now_us - last_force_update_us_).ToSecondf()
+            : 0.001f;
+    last_force_update_us_ = now_us;
+
+    force_x = ClampAbs(
+        force_x_pid_.Calculate(target_vx, force_estimate_state_.vx_mps, dt_s),
+        force_config_.max_control_force_n);
+    force_y = ClampAbs(
+        force_y_pid_.Calculate(target_vy, force_estimate_state_.vy_mps, dt_s),
+        force_config_.max_control_force_n);
+    const float torque_fb = ClampAbs(
+        torque_z_pid_.Calculate(target_wz, force_estimate_state_.wz_radps,
+                                dt_s),
+        force_config_.max_control_torque_nm);
+    torque_z =
+        ClampAbs(torque_fb + force_config_.torque_feedforward_coeff * target_wz,
+                 force_config_.max_control_torque_nm);
+  }
+
+  // Step 5: 逆动力学分配 → wheel_force[4]
+  const float rotation_arm =
+      (actuator_config_.wheel_base_m + actuator_config_.track_width_m) * 0.5f;
+  const float inv_4 = 0.25f;
+  const float inv_4r =
+      rotation_arm > 0.0f ? 1.0f / (4.0f * rotation_arm) : 0.0f;
+
+  std::array<float, kWheelCount> wheel_force{};
+  wheel_force[static_cast<size_t>(Config::WheelIndex::kFrontLeft)] =
+      (force_x - force_y) * inv_4 - torque_z * inv_4r;
+  wheel_force[static_cast<size_t>(Config::WheelIndex::kFrontRight)] =
+      (force_x + force_y) * inv_4 + torque_z * inv_4r;
+  wheel_force[static_cast<size_t>(Config::WheelIndex::kRearLeft)] =
+      (force_x + force_y) * inv_4 - torque_z * inv_4r;
+  wheel_force[static_cast<size_t>(Config::WheelIndex::kRearRight)] =
+      (force_x - force_y) * inv_4 + torque_z * inv_4r;
+
+  // Step 6: 力→扭矩（含阻尼 + Stribeck 摩擦补偿）
+  const float wheel_radius = std::max(actuator_config_.wheel_radius_m, 0.001f);
+  for (std::size_t i = 0; i < kWheelCount; ++i) {
+    const float base_tau = wheel_force[i] * wheel_radius;
+    const float speed_damping =
+        force_config_.friction.speed_feedback_gain *
+        (target_wheel_omega_radps_[i] - current_wheel_speed_radps[i]);
+    const float friction = CalculateFrictionCompensation(
+        target_wheel_omega_radps_[i], current_wheel_speed_radps[i],
+        force_config_.friction);
+    wheel_tau_ref_nm_[i] =
+        ClampAbs(base_tau + speed_damping + friction,
+                 force_config_.max_wheel_tau_ref_nm);
+  }
+
+  // Step 7: 功率限制
   const auto power_limited_output = power_limiter_.Apply(
       ChassisPowerLimiter::Input{
           .command = applied_motion_command_,
           .referee = referee_constraints,
           .super_cap = super_cap_state_,
           .current_wheel_speed_radps = current_wheel_speed_radps,
-          .target_wheel_speed_radps = requested_wheel_speed_radps,
+          .target_wheel_speed_radps = target_wheel_omega_radps_,
+          .wheel_tau_ref_nm = wheel_tau_ref_nm_,
           .current_cmd_raw = current_cmd_raw,
           .motor_speed_rpm = motor_speed_rpm,
       });
   applied_motion_command_ = power_limited_output.command;
-  output_enabled_ = IsChassisReady(robot_mode_) &&
-                    applied_motion_command_.motion_mode !=
-                        MotionModeType::kStop;
-  target_wheel_speed_radps_ = power_limited_output.target_wheel_speed_radps;
-  ApplyWheelTargets(wheel_motors_, target_wheel_speed_radps_, output_enabled_);
+
+  // Step 8: 下发扭矩
+  ApplyWheelTorques(wheel_motors_, power_limited_output.limited_wheel_tau_ref_nm,
+                    output_enabled_, force_config_.torque_constant_nm_per_a);
 
   SendSuperCapCommand(referee_constraints);
 }
@@ -481,7 +588,13 @@ void ChassisController::OnMonitor() {
   PullTopicData();
 
   const auto now_us = LibXR::Timebase::GetMicroseconds();
-  UpdateWheelControl();
+  const RefereeConstraintView referee_constraints =
+      BuildRefereeConstraintView(referee_state_);
+  const bool has_yaw_feedback = ins_state_.online && ins_state_.gyro_online;
+  applied_motion_command_ = BuildAppliedMotionCommand(
+      robot_mode_, motion_command_, actuator_config_,
+      ins_state_.yaw_deg, has_yaw_feedback, gimbal_state_);
+  UpdateForceControl(referee_constraints);
   UpdateChassisState(now_us);
 }
 
