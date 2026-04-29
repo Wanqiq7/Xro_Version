@@ -250,6 +250,31 @@ std::array<float, kWheelCount> ReadWheelSpeedRadps(
   return wheel_speed_radps;
 }
 
+std::array<float, kWheelCount> ReadWheelCurrentCommandRaw(
+    const std::array<DJIMotor*, kWheelCount>& wheel_motors) {
+  std::array<float, kWheelCount> current_cmd_raw{0.0f, 0.0f, 0.0f, 0.0f};
+  for (std::size_t index = 0; index < kWheelCount; ++index) {
+    if (wheel_motors[index] == nullptr) {
+      continue;
+    }
+    current_cmd_raw[index] =
+        static_cast<float>(wheel_motors[index]->GetState().target_current);
+  }
+  return current_cmd_raw;
+}
+
+std::array<float, kWheelCount> ReadWheelRotorSpeedRpm(
+    const std::array<DJIMotor*, kWheelCount>& wheel_motors) {
+  std::array<float, kWheelCount> motor_speed_rpm{0.0f, 0.0f, 0.0f, 0.0f};
+  for (std::size_t index = 0; index < kWheelCount; ++index) {
+    if (wheel_motors[index] == nullptr) {
+      continue;
+    }
+    motor_speed_rpm[index] = wheel_motors[index]->GetFeedback().rotor_speed_rpm;
+  }
+  return motor_speed_rpm;
+}
+
 void ApplyWheelTargets(
     const std::array<DJIMotor*, kWheelCount>& wheel_motors,
     const std::array<float, kWheelCount>& target_wheel_speed_radps,
