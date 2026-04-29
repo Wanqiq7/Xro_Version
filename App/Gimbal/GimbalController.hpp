@@ -1,10 +1,9 @@
 #pragma once
 
-#include <Eigen/Core>
-
 #include "../Robot/ControllerBase.hpp"
 #include "../Topics/AimCommand.hpp"
 #include "../Topics/GimbalState.hpp"
+#include "../Topics/InsState.hpp"
 #include "../Topics/RobotMode.hpp"
 #include "libxr.hpp"
 
@@ -33,7 +32,7 @@ struct AxisState {
 /**
  * @brief 云台控制器
  *
- * 负责云台姿态估计、桥接控制与状态发布。
+ * 负责消费统一 INS 姿态、桥接控制与状态发布。
  */
 class GimbalController : public ControllerBase {
  public:
@@ -41,17 +40,15 @@ class GimbalController : public ControllerBase {
                    const AimCommand& aim_command,
                    LibXR::Topic& robot_mode_topic,
                    LibXR::Topic& gimbal_state_topic,
+                   LibXR::Topic::Domain& app_topic_domain,
                    DJIMotor& yaw_motor, DMMotor& pitch_motor);
 
   void OnMonitor() override;
 
  private:
-  using ImuVector = Eigen::Matrix<float, 3, 1>;
   using YawControlState = AxisState;
 
   void PullTopicData();
-  void UpdateRelativeYawEstimate();
-  void UpdateRelativePitchEstimate();
   bool IsRobotReady() const;
   void SyncYawMotorStateSummary();
   void SyncPitchMotorStateSummary();
@@ -62,23 +59,15 @@ class GimbalController : public ControllerBase {
   const AimCommand& aim_command_;
   LibXR::Topic& gimbal_state_topic_;
   RobotMode robot_mode_{};
+  InsState ins_state_{};
   GimbalState gimbal_state_{};
   DJIMotor& yaw_motor_;
   DMMotor& pitch_motor_;
   YawControlState yaw_state_{};
   AxisState pitch_state_{};
-  ImuVector gyro_data_ = ImuVector::Zero();
-  ImuVector accl_data_ = ImuVector::Zero();
-  float relative_yaw_deg_ = 0.0f;
-  float relative_pitch_deg_ = 0.0f;
-  bool has_gyro_sample_ = false;
-  bool has_accl_sample_ = false;
-  LibXR::MicrosecondTimestamp last_yaw_update_us_ = 0;
-  LibXR::MicrosecondTimestamp last_pitch_update_us_ = 0;
 
   LibXR::Topic::ASyncSubscriber<RobotMode> robot_mode_subscriber_;
-  LibXR::Topic::ASyncSubscriber<ImuVector> gyro_subscriber_;
-  LibXR::Topic::ASyncSubscriber<ImuVector> accl_subscriber_;
+  LibXR::Topic::ASyncSubscriber<InsState> ins_state_subscriber_;
 };
 
 }  // namespace App

@@ -36,11 +36,32 @@ struct RefereeState {
   bool match_started = false;
   bool fire_allowed = false;
   float chassis_power_limit_w = 0.0f;
+  float chassis_power_w = 0.0f;
+  float shooter_speed_mps = 0.0f;
+  float position_x_m = 0.0f;
+  float position_y_m = 0.0f;
+  float position_z_m = 0.0f;
+  float position_yaw_deg = 0.0f;
   std::uint16_t shooter_heat_limit = 0;
+  std::uint16_t cooling_rate = 0;
   std::uint16_t shooter_cooling_value = 0;
   std::uint16_t shooter_heat = 0;
   std::uint16_t remaining_heat = 0;
+  std::uint16_t robot_hp = 0;
+  std::uint16_t robot_max_hp = 0;
   std::uint16_t buffer_energy = 0;
+  std::uint16_t chassis_voltage_mv = 0;
+  std::uint16_t chassis_current_ma = 0;
+  std::uint16_t stage_remain_time_s = 0;
+  std::uint32_t event_flags = 0;
+  std::uint8_t hurt_armor_id = 0;
+  std::uint8_t hurt_type = 0;
+  std::uint8_t game_type = 0;
+  std::uint8_t game_progress = 0;
+  std::uint8_t game_result = 0;
+  std::uint8_t robot_id = 0;
+  std::uint8_t robot_level = 0;
+  std::uint8_t aerial_attack_time_s = 0;
   std::uint8_t remaining_energy_bits = 0;
 };
 
@@ -48,18 +69,47 @@ class Referee : public LibXR::Application {
  public:
   struct RawStateCache {
     bool has_game_status = false;
+    bool has_game_result = false;
+    bool has_event_data = false;
     bool has_robot_status = false;
+    bool has_robot_hp = false;
     bool has_power_heat = false;
+    bool has_robot_position = false;
+    bool has_aerial_energy = false;
     bool has_buff = false;
+    bool has_hurt = false;
+    bool has_shoot_data = false;
     bool match_started = false;
     bool chassis_output_enabled = false;
     bool shooter_output_enabled = false;
     float chassis_power_limit_w = 0.0f;
+    float chassis_power_w = 0.0f;
+    float shooter_speed_mps = 0.0f;
+    float position_x_m = 0.0f;
+    float position_y_m = 0.0f;
+    float position_z_m = 0.0f;
+    float position_yaw_deg = 0.0f;
     std::uint16_t shooter_heat_limit = 0;
+    std::uint16_t cooling_rate = 0;
     std::uint16_t shooter_cooling_value = 0;
     std::uint16_t shooter_heat = 0;
+    std::uint16_t robot_hp = 0;
+    std::uint16_t robot_max_hp = 0;
     std::uint16_t buffer_energy = 0;
+    std::uint16_t chassis_voltage_mv = 0;
+    std::uint16_t chassis_current_ma = 0;
+    std::uint16_t stage_remain_time_s = 0;
     std::uint16_t cooling_buff = 0;
+    std::uint16_t robot_hp_slots[16]{};
+    std::uint32_t event_flags = 0;
+    std::uint8_t game_type = 0;
+    std::uint8_t game_progress = 0;
+    std::uint8_t game_result = 0;
+    std::uint8_t hurt_armor_id = 0;
+    std::uint8_t hurt_type = 0;
+    std::uint8_t robot_id = 0;
+    std::uint8_t robot_level = 0;
+    std::uint8_t aerial_attack_time_s = 0;
     std::uint8_t remaining_energy_bits = 0;
   };
 
@@ -127,6 +177,8 @@ class Referee : public LibXR::Application {
     next_state.chassis_power_limit_w =
         ClampPowerLimit(config_, chassis_power_limit_w);
     next_state.shooter_heat_limit = ClampHeatLimit(config_, shooter_heat_limit);
+    next_state.cooling_rate =
+        ClampCoolingValue(config_, shooter_cooling_value);
     next_state.shooter_cooling_value =
         ClampCoolingValue(config_, shooter_cooling_value);
     next_state.shooter_heat =
@@ -152,32 +204,87 @@ class Referee : public LibXR::Application {
   static constexpr RawStateCache BuildRawStateCache() { return RawStateCache{}; }
 
   static constexpr RawStateCache ApplyGameStatusFrame(RawStateCache cache,
-                                                      std::uint8_t game_progress) {
+                                                      std::uint8_t game_type,
+                                                      std::uint8_t game_progress,
+                                                      std::uint16_t stage_remain_time_s) {
     cache.has_game_status = true;
+    cache.game_type = game_type;
+    cache.game_progress = game_progress;
+    cache.stage_remain_time_s = stage_remain_time_s;
     cache.match_started = game_progress >= 4U;
     return cache;
   }
 
+  static constexpr RawStateCache ApplyGameResultFrame(RawStateCache cache,
+                                                      std::uint8_t game_result) {
+    cache.has_game_result = true;
+    cache.game_result = game_result;
+    return cache;
+  }
+
+  static constexpr RawStateCache ApplyEventDataFrame(RawStateCache cache,
+                                                     std::uint32_t event_flags) {
+    cache.has_event_data = true;
+    cache.event_flags = event_flags;
+    return cache;
+  }
+
   static constexpr RawStateCache ApplyRobotStatusFrame(
-      RawStateCache cache, bool chassis_output_enabled,
+      RawStateCache cache, std::uint8_t robot_id, std::uint8_t robot_level,
+      std::uint16_t robot_hp, std::uint16_t robot_max_hp,
+      bool chassis_output_enabled,
       bool shooter_output_enabled, float chassis_power_limit_w,
+      std::uint16_t cooling_rate,
       std::uint16_t shooter_heat_limit,
       std::uint16_t shooter_cooling_value) {
     cache.has_robot_status = true;
+    cache.robot_id = robot_id;
+    cache.robot_level = robot_level;
+    cache.robot_hp = robot_hp;
+    cache.robot_max_hp = robot_max_hp;
     cache.chassis_output_enabled = chassis_output_enabled;
     cache.shooter_output_enabled = shooter_output_enabled;
     cache.chassis_power_limit_w = chassis_power_limit_w;
+    cache.cooling_rate = cooling_rate;
     cache.shooter_heat_limit = shooter_heat_limit;
     cache.shooter_cooling_value = shooter_cooling_value;
     return cache;
   }
 
-  static constexpr RawStateCache ApplyPowerHeatFrame(RawStateCache cache,
-                                                     std::uint16_t buffer_energy,
-                                                     std::uint16_t shooter_heat) {
+  static RawStateCache ApplyRobotHpFrame(RawStateCache cache,
+                                         const std::uint8_t* payload,
+                                         std::size_t payload_size) {
+    cache.has_robot_hp = payload_size >= 32U;
+    const std::size_t slot_count =
+        LibXR::min<std::size_t>(payload_size / 2U, 16U);
+    for (std::size_t i = 0; i < slot_count; ++i) {
+      cache.robot_hp_slots[i] = ReadU16Le(payload, i * 2U);
+    }
+    return cache;
+  }
+
+  static constexpr RawStateCache ApplyPowerHeatFrame(
+      RawStateCache cache, std::uint16_t chassis_voltage_mv,
+      std::uint16_t chassis_current_ma, float chassis_power_w,
+      std::uint16_t buffer_energy,
+      std::uint16_t shooter_heat) {
     cache.has_power_heat = true;
+    cache.chassis_voltage_mv = chassis_voltage_mv;
+    cache.chassis_current_ma = chassis_current_ma;
+    cache.chassis_power_w = chassis_power_w;
     cache.buffer_energy = buffer_energy;
     cache.shooter_heat = shooter_heat;
+    return cache;
+  }
+
+  static constexpr RawStateCache ApplyRobotPositionFrame(
+      RawStateCache cache, float position_x_m, float position_y_m,
+      float position_z_m, float position_yaw_deg) {
+    cache.has_robot_position = true;
+    cache.position_x_m = position_x_m;
+    cache.position_y_m = position_y_m;
+    cache.position_z_m = position_z_m;
+    cache.position_yaw_deg = position_yaw_deg;
     return cache;
   }
 
@@ -190,6 +297,29 @@ class Referee : public LibXR::Application {
     return cache;
   }
 
+  static constexpr RawStateCache ApplyAerialEnergyFrame(
+      RawStateCache cache, std::uint8_t aerial_attack_time_s) {
+    cache.has_aerial_energy = true;
+    cache.aerial_attack_time_s = aerial_attack_time_s;
+    return cache;
+  }
+
+  static constexpr RawStateCache ApplyHurtFrame(RawStateCache cache,
+                                                std::uint8_t hurt_armor_id,
+                                                std::uint8_t hurt_type) {
+    cache.has_hurt = true;
+    cache.hurt_armor_id = hurt_armor_id;
+    cache.hurt_type = hurt_type;
+    return cache;
+  }
+
+  static constexpr RawStateCache ApplyShootDataFrame(
+      RawStateCache cache, float shooter_speed_mps) {
+    cache.has_shoot_data = true;
+    cache.shooter_speed_mps = shooter_speed_mps;
+    return cache;
+  }
+
   static constexpr RefereeState DeriveStableState(
       const RawStateCache& cache, const App::Config::RefereeConfig& config,
       bool online) {
@@ -199,6 +329,15 @@ class Referee : public LibXR::Application {
 
     RefereeState state = BuildConservativeState(config, true);
     state.match_started = cache.has_game_status ? cache.match_started : false;
+    state.game_type = cache.has_game_status ? cache.game_type : 0U;
+    state.game_progress = cache.has_game_status ? cache.game_progress : 0U;
+    state.stage_remain_time_s =
+        cache.has_game_status ? cache.stage_remain_time_s : 0U;
+    state.game_result = cache.has_game_result ? cache.game_result : 0U;
+    state.event_flags = cache.has_event_data ? cache.event_flags : 0U;
+    state.robot_id = cache.has_robot_status ? cache.robot_id : 0U;
+    state.robot_level =
+        cache.has_robot_status ? ClampRobotLevel(cache.robot_level) : 0U;
 
     const std::uint16_t shooter_heat_limit =
         cache.has_robot_status
@@ -208,10 +347,14 @@ class Referee : public LibXR::Application {
 
     const std::uint16_t base_cooling_value =
         cache.has_robot_status
-            ? ClampCoolingValue(config, cache.shooter_cooling_value)
+            ? ClampCoolingValue(
+                  config,
+                  cache.cooling_rate > 0U ? cache.cooling_rate
+                                          : cache.shooter_cooling_value)
             : ClampCoolingValue(config, config.default_shooter_cooling_value);
     const std::uint16_t cooling_buff =
         cache.has_buff ? ClampCoolingValue(config, cache.cooling_buff) : 0U;
+    state.cooling_rate = base_cooling_value;
     state.shooter_cooling_value =
         ClampCoolingSum(config, base_cooling_value, cooling_buff);
 
@@ -219,6 +362,12 @@ class Referee : public LibXR::Application {
         (cache.has_robot_status && cache.chassis_output_enabled)
             ? ClampPowerLimit(config, cache.chassis_power_limit_w)
             : 0.0f;
+    state.chassis_voltage_mv =
+        cache.has_power_heat ? cache.chassis_voltage_mv : 0U;
+    state.chassis_current_ma =
+        cache.has_power_heat ? cache.chassis_current_ma : 0U;
+    state.chassis_power_w =
+        cache.has_power_heat ? ClampChassisPowerW(cache.chassis_power_w) : 0.0f;
 
     state.buffer_energy =
         cache.has_power_heat
@@ -237,6 +386,23 @@ class Referee : public LibXR::Application {
     state.remaining_heat = ResolveRemainingHeat(
         cache.has_robot_status && cache.has_power_heat, state.shooter_heat,
         shooter_heat_limit, config.default_remaining_heat);
+    state.robot_hp = ResolveRobotHp(cache, state.robot_id);
+    state.robot_max_hp = cache.has_robot_status ? cache.robot_max_hp : 0U;
+    state.hurt_armor_id = cache.has_hurt ? (cache.hurt_armor_id & 0x0FU) : 0U;
+    state.hurt_type = cache.has_hurt ? (cache.hurt_type & 0x0FU) : 0U;
+    state.shooter_speed_mps =
+        cache.has_shoot_data ? ClampShooterSpeedMps(cache.shooter_speed_mps)
+                             : 0.0f;
+    state.position_x_m =
+        cache.has_robot_position ? cache.position_x_m : 0.0f;
+    state.position_y_m =
+        cache.has_robot_position ? cache.position_y_m : 0.0f;
+    state.position_z_m =
+        cache.has_robot_position ? cache.position_z_m : 0.0f;
+    state.position_yaw_deg =
+        cache.has_robot_position ? cache.position_yaw_deg : 0.0f;
+    state.aerial_attack_time_s =
+        cache.has_aerial_energy ? cache.aerial_attack_time_s : 0U;
 
     state.fire_allowed =
         state.match_started && cache.has_robot_status && cache.has_power_heat &&
@@ -285,16 +451,38 @@ class Referee : public LibXR::Application {
     state.fire_allowed = false;
     state.chassis_power_limit_w =
         ClampPowerLimit(config, config.default_chassis_power_limit_w);
+    state.chassis_power_w = 0.0f;
+    state.shooter_speed_mps = 0.0f;
+    state.position_x_m = 0.0f;
+    state.position_y_m = 0.0f;
+    state.position_z_m = 0.0f;
+    state.position_yaw_deg = 0.0f;
     state.shooter_heat_limit =
         ClampHeatLimit(config, config.default_shooter_heat_limit);
+    state.cooling_rate =
+        ClampCoolingValue(config, config.default_shooter_cooling_value);
     state.shooter_cooling_value =
         ClampCoolingValue(config, config.default_shooter_cooling_value);
     state.shooter_heat =
         ClampShooterHeat(config.default_shooter_heat, state.shooter_heat_limit);
     state.remaining_heat = ClampRemainingHeat(config.default_remaining_heat,
                                               state.shooter_heat_limit);
+    state.robot_hp = 0U;
+    state.robot_max_hp = 0U;
     state.buffer_energy =
         ClampBufferEnergy(config, config.default_buffer_energy);
+    state.chassis_voltage_mv = 0U;
+    state.chassis_current_ma = 0U;
+    state.stage_remain_time_s = 0U;
+    state.event_flags = 0U;
+    state.hurt_armor_id = 0U;
+    state.hurt_type = 0U;
+    state.game_type = 0U;
+    state.game_progress = 0U;
+    state.game_result = 0U;
+    state.robot_id = 0U;
+    state.robot_level = 0U;
+    state.aerial_attack_time_s = 0U;
     state.remaining_energy_bits = config.default_remaining_energy_bits & 0x7F;
     return state;
   }
@@ -357,6 +545,30 @@ class Referee : public LibXR::Application {
     return value;
   }
 
+  static constexpr std::uint8_t ClampRobotLevel(std::uint8_t value) {
+    return value > 10U ? 10U : value;
+  }
+
+  static constexpr float ClampShooterSpeedMps(float value) {
+    if (value < 0.0f) {
+      return 0.0f;
+    }
+    if (value > 60.0f) {
+      return 60.0f;
+    }
+    return value;
+  }
+
+  static constexpr float ClampChassisPowerW(float value) {
+    if (value < 0.0f) {
+      return 0.0f;
+    }
+    if (value > 500.0f) {
+      return 500.0f;
+    }
+    return value;
+  }
+
   static constexpr std::uint16_t ClampRemainingHeat(
       std::uint16_t remaining_heat, std::uint16_t shooter_heat_limit) {
     if (remaining_heat > shooter_heat_limit) {
@@ -375,6 +587,82 @@ class Referee : public LibXR::Application {
       return 0U;
     }
     return static_cast<std::uint16_t>(shooter_heat_limit - shooter_heat);
+  }
+
+  static constexpr std::uint16_t ReadU16Le(const std::uint8_t* data,
+                                           std::size_t offset) {
+    return static_cast<std::uint16_t>(data[offset] | (data[offset + 1] << 8));
+  }
+
+  static float ReadF32Le(const std::uint8_t* data, std::size_t offset) {
+    const std::uint32_t value =
+        static_cast<std::uint32_t>(data[offset]) |
+        (static_cast<std::uint32_t>(data[offset + 1]) << 8) |
+        (static_cast<std::uint32_t>(data[offset + 2]) << 16) |
+        (static_cast<std::uint32_t>(data[offset + 3]) << 24);
+    float output = 0.0f;
+    std::memcpy(&output, &value, sizeof(output));
+    return output;
+  }
+
+  static constexpr std::uint32_t ReadU32Le(const std::uint8_t* data,
+                                           std::size_t offset) {
+    return static_cast<std::uint32_t>(data[offset]) |
+           (static_cast<std::uint32_t>(data[offset + 1]) << 8) |
+           (static_cast<std::uint32_t>(data[offset + 2]) << 16) |
+           (static_cast<std::uint32_t>(data[offset + 3]) << 24);
+  }
+
+  static constexpr int ResolveRobotHpSlotIndex(std::uint8_t robot_id) {
+    switch (robot_id) {
+      case 1:
+        return 0;
+      case 2:
+        return 1;
+      case 3:
+        return 2;
+      case 4:
+        return 3;
+      case 5:
+        return 4;
+      case 7:
+        return 5;
+      case 11:
+        return 6;
+      case 12:
+        return 7;
+      case 101:
+        return 8;
+      case 102:
+        return 9;
+      case 103:
+        return 10;
+      case 104:
+        return 11;
+      case 105:
+        return 12;
+      case 107:
+        return 13;
+      case 111:
+        return 14;
+      case 112:
+        return 15;
+      default:
+        return -1;
+    }
+  }
+
+  static constexpr std::uint16_t ResolveRobotHp(const RawStateCache& cache,
+                                                std::uint8_t robot_id) {
+    if (!cache.has_robot_status) {
+      return 0U;
+    }
+
+    const int slot_index = ResolveRobotHpSlotIndex(robot_id);
+    if (cache.has_robot_hp && slot_index >= 0) {
+      return cache.robot_hp_slots[slot_index];
+    }
+    return cache.robot_hp;
   }
 
   void PublishState(const RefereeState& state) {
@@ -420,6 +708,9 @@ class Referee : public LibXR::Application {
     while (rx_window_size_ >= 9) {
       std::size_t frame_size = 0;
       if (!TryParseSingleFrame(rx_window_, rx_window_size_, frame_size)) {
+        if (frame_size > rx_window_size_) {
+          break;
+        }
         ConsumeBytes(1);
         continue;
       }
@@ -457,37 +748,91 @@ class Referee : public LibXR::Application {
     const std::uint8_t* payload = frame + 7;
     switch (cmd_id) {
       case 0x0001:
-        if (data_length >= 1) {
+        if (data_length >= 3) {
+          const std::uint8_t game_type =
+              static_cast<std::uint8_t>(payload[0] & 0x0F);
           const std::uint8_t game_progress = static_cast<std::uint8_t>(
               (payload[0] >> 4) & 0x0F);
           raw_state_cache_ =
-              ApplyGameStatusFrame(raw_state_cache_, game_progress);
+              ApplyGameStatusFrame(raw_state_cache_, game_type, game_progress,
+                                   ReadU16Le(payload, 1));
+        } else if (data_length >= 1) {
+          const std::uint8_t game_type =
+              static_cast<std::uint8_t>(payload[0] & 0x0F);
+          const std::uint8_t game_progress = static_cast<std::uint8_t>(
+              (payload[0] >> 4) & 0x0F);
+          raw_state_cache_ = ApplyGameStatusFrame(raw_state_cache_, game_type,
+                                                  game_progress, 0U);
+        }
+        break;
+      case 0x0002:
+        if (data_length >= 1) {
+          raw_state_cache_ =
+              ApplyGameResultFrame(raw_state_cache_, payload[0]);
+        }
+        break;
+      case 0x0003:
+        if (data_length >= 32) {
+          raw_state_cache_ =
+              ApplyRobotHpFrame(raw_state_cache_, payload, data_length);
+        }
+        break;
+      case 0x0101:
+        if (data_length >= 4) {
+          raw_state_cache_ =
+              ApplyEventDataFrame(raw_state_cache_, ReadU32Le(payload, 0));
         }
         break;
       case 0x0201:
         if (data_length >= 13) {
+          const std::uint8_t output_flags = payload[12];
           raw_state_cache_ = ApplyRobotStatusFrame(
-              raw_state_cache_, (payload[12] & (1U << 1U)) != 0U,
-              (payload[12] & (1U << 2U)) != 0U,
-              static_cast<float>(payload[10] | (payload[11] << 8)),
-              static_cast<std::uint16_t>(payload[8] | (payload[9] << 8)),
-              static_cast<std::uint16_t>(payload[6] | (payload[7] << 8)));
+              raw_state_cache_, payload[0], payload[1], ReadU16Le(payload, 2),
+              ReadU16Le(payload, 4),
+              (output_flags & (1U << 1U)) != 0U,
+              (output_flags & (1U << 2U)) != 0U,
+              static_cast<float>(ReadU16Le(payload, 10)), ReadU16Le(payload, 6),
+              ReadU16Le(payload, 8), ReadU16Le(payload, 6));
         }
         break;
       case 0x0202:
-        if (data_length >= 14) {
+        if (data_length >= 12) {
           raw_state_cache_ = ApplyPowerHeatFrame(
-              raw_state_cache_,
-              static_cast<std::uint16_t>(payload[8] | (payload[9] << 8)),
-              static_cast<std::uint16_t>(payload[10] | (payload[11] << 8)));
+              raw_state_cache_, ReadU16Le(payload, 0), ReadU16Le(payload, 2),
+              ReadF32Le(payload, 4), ReadU16Le(payload, 8),
+              ReadU16Le(payload, 10));
+        }
+        break;
+      case 0x0203:
+        if (data_length >= 16) {
+          raw_state_cache_ = ApplyRobotPositionFrame(
+              raw_state_cache_, ReadF32Le(payload, 0), ReadF32Le(payload, 4),
+              ReadF32Le(payload, 8), ReadF32Le(payload, 12));
         }
         break;
       case 0x0204:
         if (data_length >= 8) {
           raw_state_cache_ = ApplyBuffFrame(
-              raw_state_cache_,
-              static_cast<std::uint16_t>(payload[1] | (payload[2] << 8)),
+              raw_state_cache_, ReadU16Le(payload, 1),
               static_cast<std::uint8_t>(payload[7] & 0x7F));
+        }
+        break;
+      case 0x0205:
+        if (data_length >= 1) {
+          raw_state_cache_ =
+              ApplyAerialEnergyFrame(raw_state_cache_, payload[0]);
+        }
+        break;
+      case 0x0206:
+        if (data_length >= 1) {
+          raw_state_cache_ = ApplyHurtFrame(raw_state_cache_, payload[0] & 0x0F,
+                                            (payload[0] >> 4) & 0x0F);
+        }
+        break;
+      case 0x0207:
+        if (data_length >= 7) {
+          raw_state_cache_ = ApplyShootDataFrame(raw_state_cache_,
+                                                 ReadF32Le(payload, 3));
         }
         break;
       default:

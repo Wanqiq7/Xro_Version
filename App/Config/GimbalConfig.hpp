@@ -5,6 +5,13 @@
 
 namespace App::Config {
 
+// yaw 电机单圈角度与底盘正方向对齐时的角度，需上板按机械零位标定。
+inline constexpr float kYawChassisAlignDeg = 0.0f;
+inline constexpr float kYawRelativeDirection = 1.0f;
+// pitch 轴先给出保守 bring-up 保护限位，后续按机构实测重新标定。
+inline constexpr float kPitchCommandMinDeg = -25.0f;
+inline constexpr float kPitchCommandMaxDeg = 25.0f;
+
 // GM6020 使用 0x1FF 组，motor_number 5-8 对应 CAN ID 0x205-0x208
 inline constexpr DJIMotorGroupConfig kGimbalMotorGroupConfig{
     .can_name = "can1",

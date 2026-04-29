@@ -41,6 +41,7 @@ class ShootController : public ControllerBase {
   void ApplyLoaderCommands(bool friction_enabled, LoaderModeType loader_mode,
                            std::uint32_t now_ms);
   void ResetLoaderSequence();
+  bool ConsumeShotRequest(LoaderModeType mode);
   void QueueSingleShots(std::uint8_t shot_count);
   void StepSingleShotSequence(LoaderModeType mode, std::uint32_t now_ms);
   bool IsLoaderAtTarget() const;
@@ -61,6 +62,7 @@ class ShootController : public ControllerBase {
   bool single_request_latched_ = false;
   bool single_step_active_ = false;
   std::uint8_t pending_single_shots_ = 0;
+  std::uint32_t last_shot_request_seq_ = 0;
   float loader_target_angle_deg_ = 0.0f;
   std::uint32_t next_single_step_allowed_ms_ = 0;
   bool jam_recovery_active_ = false;

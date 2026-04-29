@@ -220,9 +220,12 @@ void ShootController::ApplyLoaderCommands(bool friction_enabled,
   }
 
   if (!single_request_latched_) {
+    single_request_latched_ = true;
+  }
+
+  if (ConsumeShotRequest(loader_mode)) {
     QueueSingleShots(ResolveRequestedSingleLikeShotCount(
         loader_mode, fire_command_.burst_count));
-    single_request_latched_ = true;
   }
 
   StepSingleShotSequence(loader_mode, now_ms);
@@ -234,6 +237,24 @@ void ShootController::ResetLoaderSequence() {
   pending_single_shots_ = 0;
   loader_target_angle_deg_ = 0.0f;
   next_single_step_allowed_ms_ = 0;
+}
+
+bool ShootController::ConsumeShotRequest(LoaderModeType mode) {
+  if (!IsSingleLikeMode(mode)) {
+    last_shot_request_seq_ = fire_command_.shot_request_seq;
+    return false;
+  }
+
+  if (fire_command_.shot_request_seq == 0U) {
+    return false;
+  }
+
+  const bool has_new_request =
+      fire_command_.shot_request_seq != last_shot_request_seq_;
+  if (has_new_request) {
+    last_shot_request_seq_ = fire_command_.shot_request_seq;
+  }
+  return has_new_request;
 }
 
 void ShootController::QueueSingleShots(std::uint8_t shot_count) {

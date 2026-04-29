@@ -1,26 +1,29 @@
 #pragma once
 
-#include <memory>
-
 #include "../Chassis/ChassisController.hpp"
 #include "../Cmd/DecisionController.hpp"
 #include "../Cmd/InputController.hpp"
+#include "../Cmd/MasterMachineBridgeController.hpp"
 #include "../Gimbal/GimbalController.hpp"
+#include "../Health/HealthController.hpp"
 #include "../Shoot/ShootController.hpp"
 #include "../../Modules/BMI088/BMI088.hpp"
 #include "../../Modules/CANBridge/CANBridge.hpp"
 #include "../../Modules/DMMotor/DMMotor.hpp"
 #include "../../Modules/DJIMotor/DJIMotor.hpp"
+#include "../../Modules/INS/INS.hpp"
 #include "../../Modules/MasterMachine/MasterMachine.hpp"
-#include "../../Modules/RemoteControl/DT7.hpp"
+#include "../../Modules/DT7/DT7.hpp"
 #include "../../Modules/Referee/Referee.hpp"
 #include "../../Modules/SharedTopicClient/SharedTopicClient.hpp"
-#include "../../Modules/RemoteControl/VT13.hpp"
+#include "../../Modules/VT13/VT13.hpp"
 #include "../../Modules/SuperCap/SuperCap.hpp"
 #include "../Cmd/OperatorInputSnapshot.hpp"
 #include "../Topics/AimCommand.hpp"
 #include "../Topics/FireCommand.hpp"
+#include "../Topics/InsState.hpp"
 #include "../Topics/MotionCommand.hpp"
+#include "../Topics/SystemHealth.hpp"
 
 namespace App {
 
@@ -36,6 +39,8 @@ class AppRuntime {
   LibXR::Topic chassis_state_topic_;
   LibXR::Topic gimbal_state_topic_;
   LibXR::Topic shoot_state_topic_;
+  LibXR::Topic ins_state_topic_;
+  LibXR::Topic system_health_topic_;
 
   // --- 共享命令状态（Controller 间同周期共享，非 Topic）---
   OperatorInputSnapshot operator_input_{};
@@ -45,12 +50,12 @@ class AppRuntime {
 
   // --- 传感器模块 ---
   BMI088 bmi088_;
+  INS ins_;
   Referee referee_;
   MasterMachine master_machine_;
 
   // --- 输入设备 ---
   DT7 primary_remote_control_;
-  std::unique_ptr<DT7> secondary_remote_control_;
   VT13 vt13_;
 
   // --- 通信桥接 ---
@@ -77,11 +82,13 @@ class AppRuntime {
   DJIMotor shoot_loader_motor_;
 
   // --- 控制器（LockFreeList 头插：后构造先执行）---
-  ShootController shoot_controller_;       // 执行顺序 5
-  ChassisController chassis_controller_;   // 执行顺序 4
-  GimbalController gimbal_controller_;     // 执行顺序 3
-  DecisionController decision_controller_; // 执行顺序 2
-  InputController input_controller_;       // 执行顺序 1
+  MasterMachineBridgeController master_machine_bridge_controller_; // 执行顺序 7
+  ShootController shoot_controller_;                                // 执行顺序 6
+  ChassisController chassis_controller_;                            // 执行顺序 5
+  GimbalController gimbal_controller_;                              // 执行顺序 4
+  DecisionController decision_controller_;                          // 执行顺序 3
+  HealthController health_controller_;                              // 执行顺序 2
+  InputController input_controller_;                                // 执行顺序 1
 };
 
 // Ozone 直接调试入口：指向真实运行中的 AppRuntime，不复制任何状态。

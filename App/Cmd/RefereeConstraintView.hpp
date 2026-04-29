@@ -7,6 +7,12 @@
 
 namespace App {
 
+enum class RefereeCampColor : std::uint8_t {
+  kUnknown = 0,
+  kRed = 1,
+  kBlue = 2,
+};
+
 struct RefereeConstraintView {
   // bring-up 语义：裁判离线不阻断底盘低层运动验证，但不放开发射许可。
   bool referee_online = false;
@@ -15,11 +21,30 @@ struct RefereeConstraintView {
   bool power_gate_active = false;
   bool power_limited = false;
   bool referee_allows_fire = false;
+  bool robot_id_valid = false;
+  bool robot_alive = false;
+  bool hp_valid = false;
+  bool shooter_heat_valid = false;
+  bool buffer_energy_valid = false;
+  bool self_color_known = false;
   float chassis_power_limit_w = 0.0f;
   float motion_scale = 1.0f;
   float max_fire_rate_hz = 0.0f;
+  float shooter_heat_ratio = 0.0f;
+  float remaining_heat_ratio = 0.0f;
   std::uint16_t shooter_heat_limit = 0;
+  std::uint16_t shooter_heat = 0;
   std::uint16_t remaining_heat = 0;
+  std::uint16_t robot_hp = 0;
+  std::uint16_t buffer_energy = 0;
+  std::uint16_t cooling_rate = 0;
+  std::uint8_t robot_id = 0;
+  std::uint8_t robot_level = 0;
+  std::uint8_t hurt_armor_id = 0;
+  std::uint8_t hurt_type = 0;
+  std::uint8_t remaining_energy_bits = 0;
+  RefereeCampColor self_color = RefereeCampColor::kUnknown;
+  RefereeCampColor enemy_color = RefereeCampColor::kUnknown;
 };
 
 inline constexpr float kStopMotionScale = 0.0f;
@@ -30,6 +55,39 @@ inline constexpr float kHighMotionScale = 0.8f;
 inline constexpr float kPowerLimitedFireRateHz = 1.0f;
 inline constexpr float kMediumHeatFireRateHz = 2.0f;
 inline constexpr float kUnlimitedFireRateHz = 1000.0f;
+inline constexpr std::uint8_t kRedRobotIdMin = 1U;
+inline constexpr std::uint8_t kRedRobotIdMax = 99U;
+inline constexpr std::uint8_t kBlueRobotIdMin = 100U;
+
+constexpr float ClampRatio(std::uint16_t value, std::uint16_t limit) {
+  if (limit == 0U) {
+    return 0.0f;
+  }
+  const float ratio = static_cast<float>(value) / static_cast<float>(limit);
+  return std::clamp(ratio, 0.0f, 1.0f);
+}
+
+constexpr RefereeCampColor ResolveSelfCampColor(std::uint8_t robot_id) {
+  if (robot_id >= kBlueRobotIdMin) {
+    return RefereeCampColor::kBlue;
+  }
+  if (robot_id >= kRedRobotIdMin && robot_id <= kRedRobotIdMax) {
+    return RefereeCampColor::kRed;
+  }
+  return RefereeCampColor::kUnknown;
+}
+
+constexpr RefereeCampColor ResolveEnemyCampColor(RefereeCampColor self_color) {
+  switch (self_color) {
+    case RefereeCampColor::kRed:
+      return RefereeCampColor::kBlue;
+    case RefereeCampColor::kBlue:
+      return RefereeCampColor::kRed;
+    case RefereeCampColor::kUnknown:
+    default:
+      return RefereeCampColor::kUnknown;
+  }
+}
 
 constexpr float ResolveEnergyMotionScale(std::uint8_t remaining_energy_bits) {
   if ((remaining_energy_bits & (1U << 1U)) != 0U ||
@@ -90,15 +148,18 @@ constexpr float ResolveMaxFireRateHz(const RefereeState& referee_state) {
     return 0.0f;
   }
 
-  if (referee_state.shooter_cooling_value == 0U) {
+  const std::uint16_t cooling_rate =
+      referee_state.cooling_rate > 0U ? referee_state.cooling_rate
+                                      : referee_state.shooter_cooling_value;
+  if (cooling_rate == 0U) {
     return kPowerLimitedFireRateHz;
   }
 
-  if (referee_state.remaining_heat <= referee_state.shooter_cooling_value) {
+  if (referee_state.remaining_heat <= cooling_rate) {
     return kPowerLimitedFireRateHz;
   }
   if (referee_state.remaining_heat <=
-      static_cast<std::uint16_t>(referee_state.shooter_cooling_value * 2U)) {
+      static_cast<std::uint16_t>(cooling_rate * 2U)) {
     return kMediumHeatFireRateHz;
   }
   return kUnlimitedFireRateHz;
@@ -110,25 +171,55 @@ constexpr RefereeConstraintView BuildRefereeConstraintView(
     return RefereeConstraintView{};
   }
 
+  const RefereeCampColor self_color =
+      ResolveSelfCampColor(referee_state.robot_id);
   const float motion_scale =
       std::min(ResolvePowerLimitMotionScale(referee_state.chassis_power_limit_w),
                std::min(ResolveBufferMotionScale(referee_state.buffer_energy),
                         ResolveEnergyMotionScale(
                             referee_state.remaining_energy_bits)));
   const float max_fire_rate_hz = ResolveMaxFireRateHz(referee_state);
+  const std::uint16_t cooling_rate =
+      referee_state.cooling_rate > 0U ? referee_state.cooling_rate
+                                      : referee_state.shooter_cooling_value;
+  const bool shooter_heat_valid = referee_state.shooter_heat_limit > 0U;
+  const bool hp_valid = referee_state.robot_id != 0U;
+  const bool buffer_energy_valid = true;
+  const bool power_gate_active = motion_scale < 1.0f;
 
   return RefereeConstraintView{
       .referee_online = true,
       .match_gate_active = !referee_state.match_started,
       .fire_gate_active = max_fire_rate_hz < kUnlimitedFireRateHz,
-      .power_gate_active = motion_scale < 1.0f,
+      .power_gate_active = power_gate_active,
       .power_limited = true,
       .referee_allows_fire = max_fire_rate_hz > 0.0f,
+      .robot_id_valid = referee_state.robot_id != 0U,
+      .robot_alive = referee_state.robot_hp > 0U,
+      .hp_valid = hp_valid,
+      .shooter_heat_valid = shooter_heat_valid,
+      .buffer_energy_valid = buffer_energy_valid,
+      .self_color_known = self_color != RefereeCampColor::kUnknown,
       .chassis_power_limit_w = referee_state.chassis_power_limit_w,
       .motion_scale = motion_scale,
       .max_fire_rate_hz = max_fire_rate_hz,
+      .shooter_heat_ratio =
+          ClampRatio(referee_state.shooter_heat, referee_state.shooter_heat_limit),
+      .remaining_heat_ratio = ClampRatio(referee_state.remaining_heat,
+                                         referee_state.shooter_heat_limit),
       .shooter_heat_limit = referee_state.shooter_heat_limit,
+      .shooter_heat = referee_state.shooter_heat,
       .remaining_heat = referee_state.remaining_heat,
+      .robot_hp = referee_state.robot_hp,
+      .buffer_energy = referee_state.buffer_energy,
+      .cooling_rate = cooling_rate,
+      .robot_id = referee_state.robot_id,
+      .robot_level = referee_state.robot_level,
+      .hurt_armor_id = referee_state.hurt_armor_id,
+      .hurt_type = referee_state.hurt_type,
+      .remaining_energy_bits = referee_state.remaining_energy_bits,
+      .self_color = self_color,
+      .enemy_color = ResolveEnemyCampColor(self_color),
   };
 }
 

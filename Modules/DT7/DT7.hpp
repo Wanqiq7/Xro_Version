@@ -33,7 +33,7 @@ enum class RemoteSwitchPosition : uint8_t {
 /**
  * @brief DT7 遥控器最小状态
  *
- * 仅保留当前批次 InputRole 所需的最小强类型输入信息。
+ * 仅保留当前 App 输入链路所需的最小强类型输入信息。
  * 该结构由 DT7 模块私有发布，不进入 App/Topics 公共契约。
  */
 struct DT7State {

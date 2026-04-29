@@ -36,6 +36,8 @@
 - `phase_23_batch8_impl`: completed
 - `phase_24_batch9_scope_trim`: completed
 - `phase_25_role_semantics_absorb_impl`: completed
+- `phase_26_referee_master_can_comm_controller_rebind`: completed
+- `phase_27_master_machine_status_feedback_loop`: completed
 
 ## Deliverables
 
@@ -147,3 +149,13 @@
       1. 缺少 `CAN1` 板上实测
       2. 仍未接入控制链路
       3. 若后续要扩 `supercap_degraded` 或接入 `DecisionRole`，必须单独立项
+  - 当前 `referee / master_machine / can_comm` 后续补全进入 Controller 体系收口：
+    - `RefereeConstraintView` 的发射许可已经在 `DecisionController` 生成 `FireCommand` 时生效，下游 `ShootController` 不再是唯一兜底点。
+    - `MasterMachineState` 的视觉目标在白名单允许时可进入 `OperatorInputSnapshot` 的 aim lane，并通过 `RobotMode.aim_mode = kAutoTrack` 表达。
+    - `OperatorInputSnapshot` 显式携带 `ControlSource`，避免 master_machine 覆盖后仍被标成 remote。
+    - `CANBridge` 继续保持通用桥接模块边界，仅补可观测 `State()` 访问，不把 payload 直接接入业务控制。
+  - 当前 `master_machine` 最小状态回传闭环已落地：
+    - 新增 `MasterMachineBridgeController`
+    - 回传字段只使用 `RobotMode / ShootState / InsState / MasterMachineState` 的稳定摘要
+    - `AppRuntime` 局部把 `MasterMachine` direction 从默认 `kRxOnly` 提升到 `kBidirectional`，只影响该实例，不修改全局默认
+    - 回传路径显式做了 `ins_state` app 域订阅、在线 gating 和 50ms 节流

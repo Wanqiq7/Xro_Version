@@ -1,50 +1,25 @@
 #include "GimbalController.hpp"
 
-#include <cmath>
-
 #include "../Config/AppConfig.hpp"
+#include "../Config/GimbalConfig.hpp"
 #include "../../Modules/DJIMotor/DJIMotor.hpp"
 #include "../../Modules/DMMotor/DMMotor.hpp"
+#include "GimbalMath.hpp"
 
 namespace App {
 
 namespace {
 
-constexpr float kRadToDeg = 57.29577951308232f;
-constexpr float kDegToRad = 0.017453292519943295f;
-constexpr float kMaxYawIntegrationStepS = 0.05f;
-constexpr float kMaxPitchIntegrationStepS = 0.05f;
-constexpr float kPitchComplementaryAlpha = 0.98f;
+constexpr float kDegToRad = GimbalMath::kDegToRad;
 
-float WrapAngleDeg(float angle_deg) {
-  while (angle_deg > 180.0f) {
-    angle_deg -= 360.0f;
+float ClampPitchCommandDeg(float pitch_deg) {
+  if (pitch_deg < Config::kPitchCommandMinDeg) {
+    return Config::kPitchCommandMinDeg;
   }
-  while (angle_deg < -180.0f) {
-    angle_deg += 360.0f;
-  }
-  return angle_deg;
-}
-
-float ClampPitchDeg(float pitch_deg) {
-  if (pitch_deg > 45.0f) {
-    return 45.0f;
-  }
-  if (pitch_deg < -45.0f) {
-    return -45.0f;
+  if (pitch_deg > Config::kPitchCommandMaxDeg) {
+    return Config::kPitchCommandMaxDeg;
   }
   return pitch_deg;
-}
-
-float EstimatePitchFromAcclDeg(const Eigen::Matrix<float, 3, 1>& accl_data) {
-  const float ax = accl_data.x();
-  const float ay = accl_data.y();
-  const float az = accl_data.z();
-  const float horizontal_norm = std::sqrt(ax * ax + az * az);
-  if (horizontal_norm <= 1e-5f && std::fabs(ay) <= 1e-5f) {
-    return 0.0f;
-  }
-  return std::atan2(-ay, horizontal_norm) * kRadToDeg;
 }
 
 }  // namespace
@@ -53,6 +28,7 @@ GimbalController::GimbalController(LibXR::ApplicationManager& appmgr,
                                    const AimCommand& aim_command,
                                    LibXR::Topic& robot_mode_topic,
                                    LibXR::Topic& gimbal_state_topic,
+                                   LibXR::Topic::Domain& app_topic_domain,
                                    DJIMotor& yaw_motor, DMMotor& pitch_motor)
     : ControllerBase(appmgr),
       aim_command_(aim_command),
@@ -60,11 +36,9 @@ GimbalController::GimbalController(LibXR::ApplicationManager& appmgr,
       yaw_motor_(yaw_motor),
       pitch_motor_(pitch_motor),
       robot_mode_subscriber_(robot_mode_topic),
-      gyro_subscriber_(AppConfig::kBmi088GyroTopicName),
-      accl_subscriber_(AppConfig::kBmi088AcclTopicName) {
+      ins_state_subscriber_(AppConfig::kInsStateTopicName, &app_topic_domain) {
   robot_mode_subscriber_.StartWaiting();
-  gyro_subscriber_.StartWaiting();
-  accl_subscriber_.StartWaiting();
+  ins_state_subscriber_.StartWaiting();
 }
 
 void GimbalController::PullTopicData() {
@@ -73,54 +47,10 @@ void GimbalController::PullTopicData() {
     robot_mode_subscriber_.StartWaiting();
   }
 
-  if (gyro_subscriber_.Available()) {
-    gyro_data_ = gyro_subscriber_.GetData();
-    gyro_subscriber_.StartWaiting();
-    has_gyro_sample_ = true;
+  if (ins_state_subscriber_.Available()) {
+    ins_state_ = ins_state_subscriber_.GetData();
+    ins_state_subscriber_.StartWaiting();
   }
-
-  if (accl_subscriber_.Available()) {
-    accl_data_ = accl_subscriber_.GetData();
-    accl_subscriber_.StartWaiting();
-    has_accl_sample_ = true;
-  }
-}
-
-void GimbalController::UpdateRelativeYawEstimate() {
-  const auto now_us = LibXR::Timebase::GetMicroseconds();
-  if (has_gyro_sample_ && last_yaw_update_us_ != 0) {
-    const float dt_s = (now_us - last_yaw_update_us_).ToSecondf();
-    if (dt_s > 0.0f && dt_s <= kMaxYawIntegrationStepS) {
-      relative_yaw_deg_ =
-          WrapAngleDeg(relative_yaw_deg_ + gyro_data_.z() * dt_s * kRadToDeg);
-    }
-  }
-  last_yaw_update_us_ = now_us;
-}
-
-void GimbalController::UpdateRelativePitchEstimate() {
-  const auto now_us = LibXR::Timebase::GetMicroseconds();
-  if (has_gyro_sample_ && last_pitch_update_us_ != 0) {
-    const float dt_s = (now_us - last_pitch_update_us_).ToSecondf();
-    if (dt_s > 0.0f && dt_s <= kMaxPitchIntegrationStepS) {
-      relative_pitch_deg_ =
-          ClampPitchDeg(relative_pitch_deg_ + gyro_data_.y() * dt_s * kRadToDeg);
-    }
-  }
-
-  if (has_accl_sample_) {
-    const float accl_pitch_deg = EstimatePitchFromAcclDeg(accl_data_);
-    if (last_pitch_update_us_ == 0) {
-      relative_pitch_deg_ = accl_pitch_deg;
-    } else {
-      relative_pitch_deg_ = ClampPitchDeg(kPitchComplementaryAlpha *
-                                              relative_pitch_deg_ +
-                                          (1.0f - kPitchComplementaryAlpha) *
-                                              accl_pitch_deg);
-    }
-  }
-
-  last_pitch_update_us_ = now_us;
 }
 
 bool GimbalController::IsRobotReady() const {
@@ -148,15 +78,17 @@ void GimbalController::SyncPitchMotorStateSummary() {
 }
 
 void GimbalController::ApplyYawMotorControl(bool robot_ready) {
+  const bool feedback_ready = ins_state_.online && ins_state_.gyro_online;
+  const bool output_enabled = robot_ready && feedback_ready;
   yaw_state_.commanded_position = aim_command_.yaw_deg;
-  yaw_state_.measured_position = relative_yaw_deg_;
-  yaw_state_.measured_rate = gyro_data_.z() * kRadToDeg;
+  yaw_state_.measured_position = ins_state_.yaw_deg;
+  yaw_state_.measured_rate = ins_state_.yaw_rate_degps;
 
-  // yaw 继续保持原桥接主线：外反馈注入 + 角度参考。
+  // yaw 使用统一 INS 外反馈注入；反馈未在线时禁止把默认零值送入闭环。
   yaw_motor_.SetExternalAngleFeedbackDeg(yaw_state_.measured_position);
   yaw_motor_.SetExternalSpeedFeedbackDegps(yaw_state_.measured_rate);
 
-  if (!robot_ready) {
+  if (!output_enabled) {
     yaw_motor_.Stop();
     SyncYawMotorStateSummary();
     yaw_state_.status = AxisStatus::kDisabled;
@@ -178,14 +110,19 @@ void GimbalController::ApplyYawMotorControl(bool robot_ready) {
 }
 
 void GimbalController::ApplyPitchMotorControl(bool robot_ready) {
-  pitch_state_.commanded_position = aim_command_.pitch_deg;
-  pitch_state_.measured_position = relative_pitch_deg_;
-  pitch_state_.measured_rate = gyro_data_.y() * kRadToDeg;
+  const float clamped_pitch_deg = ClampPitchCommandDeg(aim_command_.pitch_deg);
+  const bool feedback_ready =
+      ins_state_.online && ins_state_.gyro_online && ins_state_.accl_online;
+  const bool output_enabled = robot_ready && feedback_ready;
+  pitch_state_.commanded_position = clamped_pitch_deg;
+  pitch_state_.measured_position = ins_state_.pitch_deg;
+  pitch_state_.measured_rate = ins_state_.pitch_rate_degps;
 
-  pitch_motor_.SetExternalAngleFeedbackRad(relative_pitch_deg_ * kDegToRad);
-  pitch_motor_.SetExternalSpeedFeedbackRadps(gyro_data_.y());
+  pitch_motor_.SetExternalAngleFeedbackRad(ins_state_.pitch_deg * kDegToRad);
+  pitch_motor_.SetExternalSpeedFeedbackRadps(ins_state_.pitch_rate_degps *
+                                             kDegToRad);
 
-  if (!robot_ready) {
+  if (!output_enabled) {
     pitch_motor_.Stop();
     SyncPitchMotorStateSummary();
     pitch_state_.status = AxisStatus::kDisabled;
@@ -198,7 +135,7 @@ void GimbalController::ApplyPitchMotorControl(bool robot_ready) {
                           DMMotorFeedbackSource::kExternal);
   pitch_motor_.ChangeFeed(DMMotorOuterLoop::kSpeed,
                           DMMotorFeedbackSource::kExternal);
-  pitch_motor_.SetReference(aim_command_.pitch_deg * kDegToRad);
+  pitch_motor_.SetReference(clamped_pitch_deg * kDegToRad);
 
   SyncPitchMotorStateSummary();
   pitch_state_.status = pitch_state_.feedback_online
@@ -207,37 +144,42 @@ void GimbalController::ApplyPitchMotorControl(bool robot_ready) {
 }
 
 void GimbalController::UpdateGimbalState(bool robot_ready) {
+  const bool yaw_feedback_ready = ins_state_.online && ins_state_.gyro_online;
+  const bool pitch_feedback_ready =
+      ins_state_.online && ins_state_.gyro_online && ins_state_.accl_online;
   const bool yaw_tracking = yaw_state_.status == AxisStatus::kTracking;
   const bool pitch_tracking =
       pitch_state_.status == AxisStatus::kTracking;
-  const bool yaw_ready = yaw_state_.feedback_online &&
+  const bool yaw_ready = yaw_feedback_ready && yaw_state_.feedback_online &&
                          yaw_state_.feedback_initialized && yaw_tracking &&
                          yaw_state_.enabled && !yaw_state_.safe_stopped;
-  const bool pitch_ready = pitch_state_.feedback_online &&
+  const bool pitch_ready = pitch_feedback_ready && pitch_state_.feedback_online &&
                            pitch_state_.feedback_initialized &&
                            pitch_tracking && pitch_state_.enabled &&
                            !pitch_state_.safe_stopped;
 
-  // 当前 `yaw_deg / yaw_rate_degps` 代表 controller 基于 BMI088 构造的真实观测量：
-  // 1. `yaw_deg` 是由 z 轴角速度积分得到的相对 yaw；
-  // 2. `yaw_rate_degps` 是 z 轴角速度的实时观测；
-  // 3. `pitch_deg / pitch_rate_degps` 现在同样由 BMI088 外反馈估计驱动真实执行链。
   gimbal_state_.online = yaw_state_.feedback_online ||
                          pitch_state_.feedback_online || yaw_state_.enabled ||
-                         pitch_state_.enabled || has_gyro_sample_ ||
-                         has_accl_sample_;
+                         pitch_state_.enabled || ins_state_.online;
   gimbal_state_.ready =
-      robot_ready && yaw_ready && pitch_ready && has_gyro_sample_;
-  gimbal_state_.yaw_deg = relative_yaw_deg_;
-  gimbal_state_.pitch_deg = relative_pitch_deg_;
-  gimbal_state_.yaw_rate_degps = gyro_data_.z() * kRadToDeg;
-  gimbal_state_.pitch_rate_degps = gyro_data_.y() * kRadToDeg;
+      robot_ready && ins_state_.online && yaw_ready && pitch_ready;
+  gimbal_state_.yaw_deg = ins_state_.yaw_deg;
+  gimbal_state_.pitch_deg = ins_state_.pitch_deg;
+  gimbal_state_.yaw_rate_degps = ins_state_.yaw_rate_degps;
+  gimbal_state_.pitch_rate_degps = ins_state_.pitch_rate_degps;
+  gimbal_state_.relative_yaw_deg = GimbalMath::ComputeRelativeYawDeg(
+      yaw_motor_.GetFeedback().output_angle_deg, Config::kYawChassisAlignDeg,
+      Config::kYawRelativeDirection);
+  gimbal_state_.target_yaw_deg = yaw_state_.commanded_position;
+  gimbal_state_.target_pitch_deg = pitch_state_.commanded_position;
+  gimbal_state_.yaw_error_deg = GimbalMath::WrapAngleDeg(
+      gimbal_state_.target_yaw_deg - gimbal_state_.yaw_deg);
+  gimbal_state_.pitch_error_deg =
+      gimbal_state_.target_pitch_deg - gimbal_state_.pitch_deg;
 }
 
 void GimbalController::OnMonitor() {
   PullTopicData();
-  UpdateRelativeYawEstimate();
-  UpdateRelativePitchEstimate();
 
   const bool robot_ready = IsRobotReady();
   ApplyYawMotorControl(robot_ready);

@@ -15,15 +15,15 @@ constructor_args:
       z: 0.0
   - pid_param:
       k: 1.0
-      p: 0.0
-      i: 0.0
+      p: 1000.0
+      i: 20.0
       d: 0.0
-      i_limit: 0.0
-      out_limit: 0.0
+      i_limit: 300.0
+      out_limit: 2000.0
       cycle: false
   - gyro_topic_name: "bmi088_gyro"
   - accl_topic_name: "bmi088_accl"
-  - target_temperature: 45
+  - target_temperature: 40
   - task_stack_depth: 2048
 template_args: []
 required_hardware: spi_bmi088/spi1/SPI1 bmi088_accl_cs bmi088_gyro_cs bmi088_gyro_int pwm_bmi088_heat ramfs database

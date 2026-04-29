@@ -15,7 +15,7 @@ struct RefereeConfig {
   const char* uart_name = "uart_referee";
   std::size_t task_stack_depth = 2048;
   std::uint32_t offline_timeout_ms = 100;
-  bool enabled = false;
+  bool enabled = true;
 
   // 当前未完成真实协议解析前，统一使用保守默认值：
   // 不允许发射、比赛未开始、热量剩余为 0、功率预算为 0。

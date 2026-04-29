@@ -4,7 +4,7 @@
 /* === MODULE MANIFEST V2 ===
 module_description: VT13 是一个基于 UART 解析 rmpp VT13 协议并发布设备级私有状态的模块 / VT13 parses the rmpp VT13 UART protocol and publishes device-level private state
 constructor_args:
-  - uart_name: "usart6"
+  - uart_name: "uart_vt13"
   - task_stack_depth: 2048
 template_args: []
 required_hardware: uart_name

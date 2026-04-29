@@ -12,6 +12,17 @@ constexpr App::MotionCommand SafeMotionCommand() { return {}; }
 constexpr App::AimCommand SafeAimCommand() { return {}; }
 constexpr App::FireCommand SafeFireCommand() { return {}; }
 
+constexpr bool IsSingleLikeLoaderMode(App::LoaderModeType mode) {
+  return mode == App::LoaderModeType::kSingle ||
+         mode == App::LoaderModeType::kBurst;
+}
+
+constexpr bool ShouldDisableShoot(const App::SystemHealth& health) {
+  return health.emergency_stop_requested ||
+         health.safe_action == App::SafeAction::kDisableShoot ||
+         health.safe_action == App::SafeAction::kEmergencyStop;
+}
+
 }  // namespace
 
 namespace App {
@@ -22,6 +33,7 @@ DecisionController::DecisionController(LibXR::ApplicationManager& appmgr,
                                        AimCommand& aim_command,
                                        FireCommand& fire_command,
                                        LibXR::Topic& robot_mode_topic,
+                                       LibXR::Topic& system_health_topic,
                                        Referee& referee)
     : ControllerBase(appmgr),
       operator_input_(operator_input),
@@ -30,8 +42,10 @@ DecisionController::DecisionController(LibXR::ApplicationManager& appmgr,
       fire_command_(fire_command),
       robot_mode_topic_(robot_mode_topic),
       referee_(referee),
-      referee_subscriber_(referee_.StateTopic()) {
+      referee_subscriber_(referee_.StateTopic()),
+      system_health_subscriber_(system_health_topic) {
   referee_subscriber_.StartWaiting();
+  system_health_subscriber_.StartWaiting();
 }
 
 void DecisionController::PullTopicData() {
@@ -39,11 +53,27 @@ void DecisionController::PullTopicData() {
     referee_state_ = referee_subscriber_.GetData();
     referee_subscriber_.StartWaiting();
   }
+
+  if (system_health_subscriber_.Available()) {
+    system_health_ = system_health_subscriber_.GetData();
+    system_health_subscriber_.StartWaiting();
+  }
 }
 
 RobotMode DecisionController::BuildRobotMode(
     const OperatorInputSnapshot& input) const {
   RobotMode robot_mode{};
+
+  if (input.has_active_source && input.request_calibration) {
+    robot_mode.robot_mode = RobotModeType::kCalibration;
+    robot_mode.motion_mode = MotionModeType::kStop;
+    robot_mode.aim_mode = AimModeType::kHold;
+    robot_mode.fire_enable = false;
+    robot_mode.is_enabled = false;
+    robot_mode.is_emergency_stop = input.emergency_latched;
+    robot_mode.control_source = input.control_source;
+    return robot_mode;
+  }
 
   if (ShouldForceSafe(input)) {
     robot_mode.robot_mode = RobotModeType::kSafe;
@@ -51,19 +81,22 @@ RobotMode DecisionController::BuildRobotMode(
     robot_mode.aim_mode = AimModeType::kHold;
     robot_mode.fire_enable = false;
     robot_mode.is_enabled = false;
-    robot_mode.is_emergency_stop = true;
+    robot_mode.is_emergency_stop = input.emergency_latched;
     robot_mode.control_source = ControlSource::kUnknown;
     return robot_mode;
   }
 
   if (input.request_manual_mode) {
     robot_mode.robot_mode = RobotModeType::kManual;
-    robot_mode.control_source = ControlSource::kRemote;
-    robot_mode.motion_mode = MotionModeType::kIndependent;
-    robot_mode.aim_mode = AimModeType::kManual;
+    robot_mode.control_source = input.control_source;
+    robot_mode.motion_mode = input.requested_motion_mode;
+    robot_mode.aim_mode =
+        (input.track_target || input.request_auto_aim)
+            ? AimModeType::kAutoTrack
+            : input.requested_aim_mode;
     robot_mode.fire_enable = input.friction_enabled;
     robot_mode.is_enabled = true;
-    robot_mode.is_emergency_stop = false;
+    robot_mode.is_emergency_stop = input.emergency_latched;
     return robot_mode;
   }
 
@@ -100,9 +133,9 @@ AimCommand DecisionController::BuildAimCommand(
 
   AimCommand aim_command{};
   aim_command.aim_mode = robot_mode.aim_mode;
-  aim_command.yaw_deg = input.target_yaw_deg;
-  aim_command.pitch_deg = input.target_pitch_deg;
-  aim_command.track_target = input.track_target;
+  aim_command.yaw_deg = input.target_yaw_deg + input.yaw_delta_deg;
+  aim_command.pitch_deg = input.target_pitch_deg + input.pitch_delta_deg;
+  aim_command.track_target = input.track_target || input.request_auto_aim;
   return aim_command;
 }
 
@@ -115,15 +148,24 @@ FireCommand DecisionController::BuildFireCommand(
 
   FireCommand fire_command{};
   fire_command.friction_enable = input.friction_enabled;
-  fire_command.fire_enable = input.fire_enabled && input.friction_enabled;
-  fire_command.loader_mode =
-      fire_command.fire_enable ? LoaderModeType::kSingle : LoaderModeType::kStop;
+  fire_command.fire_enable = input.fire_enabled && input.friction_enabled &&
+                             constraints.referee_allows_fire;
+  if (fire_command.friction_enable &&
+      (fire_command.fire_enable ||
+       IsSingleLikeLoaderMode(input.requested_loader_mode))) {
+    fire_command.loader_mode = input.requested_loader_mode;
+  } else {
+    fire_command.loader_mode = LoaderModeType::kStop;
+  }
+  fire_command.shot_request_seq =
+      fire_command.fire_enable ? input.shot_request_seq : 0U;
   fire_command.target_bullet_speed_mps = input.target_bullet_speed_mps;
   fire_command.shoot_rate_hz = input.target_shoot_rate_hz;
   fire_command.referee_allows_fire = constraints.referee_allows_fire;
   fire_command.shooter_heat_limit = constraints.shooter_heat_limit;
   fire_command.remaining_heat = constraints.remaining_heat;
-  fire_command.burst_count = fire_command.fire_enable ? 1 : 0;
+  fire_command.burst_count =
+      fire_command.fire_enable ? input.requested_burst_count : 0;
 
   if (constraints.referee_online) {
     fire_command.shoot_rate_hz =
@@ -139,10 +181,22 @@ void DecisionController::OnMonitor() {
   const auto& input = operator_input_;
   const RefereeConstraintView constraints = BuildRefereeConstraintView(referee_state_);
   RobotMode robot_mode = BuildRobotMode(input);
+  if (system_health_.emergency_stop_requested) {
+    robot_mode.robot_mode = RobotModeType::kSafe;
+    robot_mode.motion_mode = MotionModeType::kStop;
+    robot_mode.aim_mode = AimModeType::kHold;
+    robot_mode.fire_enable = false;
+    robot_mode.is_enabled = false;
+    robot_mode.is_emergency_stop = true;
+  }
 
   motion_command_ = BuildMotionCommand(input, robot_mode);
   aim_command_ = BuildAimCommand(input, robot_mode);
   fire_command_ = BuildFireCommand(input, robot_mode, constraints);
+  if (ShouldDisableShoot(system_health_)) {
+    robot_mode.fire_enable = false;
+    fire_command_ = SafeFireCommand();
+  }
   robot_mode_topic_.Publish(robot_mode);
 }
 

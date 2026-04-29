@@ -19,6 +19,7 @@ struct FireCommand {
   bool fire_enable = false;
   bool friction_enable = false;
   LoaderModeType loader_mode = LoaderModeType::kStop;
+  std::uint32_t shot_request_seq = 0;
   float target_bullet_speed_mps = 0.0f;
   float shoot_rate_hz = 0.0f;
   bool referee_allows_fire = false;

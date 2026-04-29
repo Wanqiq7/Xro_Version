@@ -57,6 +57,10 @@ void Error_Handler(void);
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/
+#define USB_DP_Pin GPIO_PIN_12
+#define USB_DP_GPIO_Port GPIOA
+#define USB_DM_Pin GPIO_PIN_11
+#define USB_DM_GPIO_Port GPIOA
 #define MAG_RST_Pin GPIO_PIN_6
 #define MAG_RST_GPIO_Port GPIOG
 #define IMU_TEMP_Pin GPIO_PIN_6

@@ -246,3 +246,29 @@
   - 先完成 donor 剩余内容的目录扫描与现有文档回顾
   - 再按 `application`、系统能力模块、外围/外设模块 三路做 `N researchers -> synthesizer`
   - 当前已完成 donor 二次裁剪结论，并写回主计划文档
+
+## 2026-04-28
+
+- 已继续推进 `referee / master_machine / can_comm` 的 Controller 体系补全：
+  - `OperatorInputSnapshot` 新增 `control_source`
+  - `InputController` 为 DT7 / VT13 / MasterMachine 分别写入 `Remote / KeyboardMouse / Host`
+  - `MasterMachineInputField` 新增 `kVisionTarget` 白名单项
+  - `MasterMachine` 在白名单关闭时会清空 vision target 语义
+  - `InputController` 在 master_machine override 激活且 vision target 有效时，把 yaw/pitch 切到视觉目标并置 `track_target`
+  - `DecisionController` 根据 `track_target` 生成 `AimModeType::kAutoTrack`
+  - `DecisionController` 生成 `FireCommand` 时直接应用 `RefereeConstraintView.referee_allows_fire`
+  - `CANBridge` 增加 `State()` 只读访问口，保持通用通信模块边界
+- 已验证：
+  - `cmake --build --preset Debug` 通过
+  - `git diff --check` 通过
+  - 禁止迁移项检索未命中实现代码
+- 已继续推进下一步 `master_machine` 最小状态回传闭环：
+  - 使用 subagent 先完成字段映射与边界风险审查，再由实现 subagent 落地控制器骨架
+  - 主线程 review 后继续补了 3 个收口项：
+    - 不再直接读 `master_machine_.State()`，改为订阅 `StateTopic()`
+    - `ShootState / InsState` 回传加在线 gating
+    - 增加 50ms 发送节流
+  - `AppRuntime` 新增局部 `MakeMasterMachineConfig()`，仅把当前实例的 `direction` 从 `kRxOnly` 提升为 `kBidirectional`
+- 当前验证：
+  - 再次执行 `cmake --build --preset Debug`
+  - 成功链接 `basic_framework.elf`

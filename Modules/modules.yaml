@@ -1,6 +1,7 @@
 modules:
 - xrobot-org/BlinkLED
 - xrobot-org/BMI088
+- local/INS
 - xrobot-org/SharedTopic
 - xrobot-org/SharedTopicClient
 - xrobot-org/BuzzerAlarm

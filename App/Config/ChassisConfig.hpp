@@ -48,6 +48,35 @@ struct MecanumChassisConfig {
 
 inline constexpr MecanumChassisConfig kMecanumChassisConfig{};
 
+struct ChassisPowerLimiterConfig {
+  float stop_scale = 0.0f;
+  float low_power_scale = 0.35f;
+  float medium_power_scale = 0.60f;
+  float high_power_scale = 0.85f;
+  float critical_energy_scale = 0.25f;
+  float low_energy_scale = 0.45f;
+  float medium_energy_scale = 0.65f;
+  float high_energy_scale = 0.85f;
+  float overshoot_scale = 0.50f;
+  float large_delta_scale = 0.80f;
+  float full_scale_epsilon = 0.999f;
+  float medium_power_limit_w = 40.0f;
+  float high_power_limit_w = 60.0f;
+  float full_power_limit_w = 80.0f;
+  float low_energy_percent = 10.0f;
+  float medium_energy_percent = 20.0f;
+  float high_energy_percent = 40.0f;
+  float full_energy_percent = 70.0f;
+  float power_overshoot_margin_w = 5.0f;
+  float large_wheel_delta_radps = 60.0f;
+  float recovery_step_per_monitor = 0.05f;
+  std::uint32_t super_cap_cmd_interval = 1;
+  float low_buffer_energy_j = 10.0f;
+  float low_buffer_energy_scale = 0.40f;
+};
+
+inline constexpr ChassisPowerLimiterConfig kChassisPowerLimiterConfig{};
+
 // motor_number: 1-4 对应 CAN ID 0x201-0x204（组基址 0x200）
 inline constexpr DJIMotorGroupConfig kChassisMotorGroupConfig{
     .can_name = "can1",

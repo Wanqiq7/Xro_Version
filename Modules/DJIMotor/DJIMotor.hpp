@@ -49,6 +49,12 @@ struct DJIMotorGroupConfig {
   std::uint32_t command_frame_id = 0x200;
 };
 
+struct DJIMotorIdConfig {
+  std::uint16_t feedback_id = 0x201;
+  std::uint32_t command_frame_id = 0x200;
+  std::uint8_t command_slot = 0;
+};
+
 struct DJIMotorConfig {
   const char* name = "dji_motor";
   DJIMotorType motor_type = DJIMotorType::kM3508;
@@ -61,6 +67,10 @@ struct DJIMotorConfig {
   std::uint32_t feedback_timeout_ms = 100;
   DJIMotorOuterLoop default_outer_loop = DJIMotorOuterLoop::kSpeed;
   DJIMotorPidConfig pid{};
+  float speed_feedforward = 0.0f;
+  float current_feedforward = 0.0f;
+  float speed_filter_alpha = 1.0f;
+  float current_filter_alpha = 1.0f;
 };
 
 struct DJIMotorFeedback {
@@ -148,12 +158,19 @@ class DJIMotor {
 
   const DJIMotorFeedback& GetFeedback() const;
 
+  static DJIMotorIdConfig MakeDJIMotorIdConfig(DJIMotorType motor_type,
+                                               std::uint8_t motor_id);
+
  private:
   friend class DJIMotorGroup;
 
   static float NormalizeDegrees(float angle_deg);
 
   static float ClampAbs(float value, float limit);
+
+  static float NormalizeFilterAlpha(float alpha);
+
+  void EnterSafeStop();
 
   void UpdateFeedback(const LibXR::CAN::ClassicPack& pack);
 
@@ -327,6 +344,33 @@ inline const DJIMotorFeedback& DJIMotor::GetFeedback() const {
   return state_.feedback;
 }
 
+inline DJIMotorIdConfig DJIMotor::MakeDJIMotorIdConfig(
+    DJIMotorType motor_type, std::uint8_t motor_id) {
+  DJIMotorIdConfig config{};
+  if (motor_id < 1U) {
+    motor_id = 1U;
+  } else if (motor_id > 8U) {
+    motor_id = 8U;
+  }
+
+  const std::uint8_t zero_based_id = static_cast<std::uint8_t>(motor_id - 1U);
+  config.command_slot = static_cast<std::uint8_t>(zero_based_id % 4U);
+
+  switch (motor_type) {
+    case DJIMotorType::kGM6020:
+      config.feedback_id = static_cast<std::uint16_t>(0x204U + motor_id);
+      config.command_frame_id = (motor_id <= 4U) ? 0x1FFU : 0x2FFU;
+      break;
+    case DJIMotorType::kM2006:
+    case DJIMotorType::kM3508:
+    default:
+      config.feedback_id = static_cast<std::uint16_t>(0x200U + motor_id);
+      config.command_frame_id = (motor_id <= 4U) ? 0x200U : 0x1FFU;
+      break;
+  }
+  return config;
+}
+
 inline float DJIMotor::NormalizeDegrees(float angle_deg) {
   float normalized = std::fmod(angle_deg, 360.0f);
   if (normalized < 0.0f) {
@@ -345,6 +389,28 @@ inline float DJIMotor::ClampAbs(float value, float limit) {
   return value;
 }
 
+inline float DJIMotor::NormalizeFilterAlpha(float alpha) {
+  if (!std::isfinite(alpha)) {
+    return 1.0f;
+  }
+  if (alpha < 0.0f) {
+    return 0.0f;
+  }
+  if (alpha > 1.0f) {
+    return 1.0f;
+  }
+  return alpha;
+}
+
+inline void DJIMotor::EnterSafeStop() {
+  state_.safe_stopped = true;
+  state_.target_speed_degps = 0.0f;
+  state_.target_current = 0;
+  current_pid_.Reset();
+  speed_pid_.Reset();
+  angle_pid_.Reset();
+}
+
 inline void DJIMotor::UpdateFeedback(const LibXR::CAN::ClassicPack& pack) {
   if (pack.dlc < 7) {
     return;
@@ -359,8 +425,9 @@ inline void DJIMotor::UpdateFeedback(const LibXR::CAN::ClassicPack& pack) {
   const std::uint8_t temperature = pack.data[6];
   const float direction_sign =
       static_cast<float>(config_.direction >= 0 ? 1 : -1);
+  const bool first_feedback = !state_.feedback.initialized;
 
-  if (!state_.feedback.initialized) {
+  if (first_feedback) {
     state_.feedback.angle_raw = angle_raw;
     state_.feedback.initialized = true;
   } else {
@@ -378,13 +445,29 @@ inline void DJIMotor::UpdateFeedback(const LibXR::CAN::ClassicPack& pack) {
 
   const float reduction_ratio =
       (config_.reduction_ratio > 0.0f) ? config_.reduction_ratio : 1.0f;
+  const float speed_alpha = NormalizeFilterAlpha(config_.speed_filter_alpha);
+  const float current_alpha = NormalizeFilterAlpha(config_.current_filter_alpha);
+  const float measured_rotor_speed_rpm =
+      static_cast<float>(speed_raw) * direction_sign;
+  const float measured_current =
+      static_cast<float>(current_raw) * direction_sign;
   state_.feedback.online = true;
   state_.feedback.rotor_angle_deg = NormalizeDegrees(
       static_cast<float>(angle_raw) * config_.ecd_to_deg * direction_sign);
-  state_.feedback.rotor_speed_rpm = static_cast<float>(speed_raw) * direction_sign;
+  if (first_feedback) {
+    state_.feedback.rotor_speed_rpm = measured_rotor_speed_rpm;
+    state_.feedback.real_current = static_cast<std::int16_t>(measured_current);
+  } else {
+    state_.feedback.rotor_speed_rpm =
+        (1.0f - speed_alpha) * state_.feedback.rotor_speed_rpm +
+        speed_alpha * measured_rotor_speed_rpm;
+    const float filtered_current =
+        (1.0f - current_alpha) *
+            static_cast<float>(state_.feedback.real_current) +
+        current_alpha * measured_current;
+    state_.feedback.real_current = static_cast<std::int16_t>(filtered_current);
+  }
   state_.feedback.rotor_speed_degps = state_.feedback.rotor_speed_rpm * 6.0f;
-  state_.feedback.real_current =
-      static_cast<std::int16_t>(static_cast<float>(current_raw) * direction_sign);
   state_.feedback.temperature = temperature;
   state_.feedback.output_total_angle_deg =
       state_.feedback.rotor_total_angle_deg / reduction_ratio;
@@ -406,9 +489,12 @@ inline std::int16_t DJIMotor::Step(float dt_s) {
   }
 
   if (!state_.enabled) {
-    state_.safe_stopped = true;
-    state_.target_speed_degps = 0.0f;
-    state_.target_current = 0;
+    EnterSafeStop();
+    return 0;
+  }
+
+  if (!state_.feedback.initialized || !state_.feedback.online) {
+    EnterSafeStop();
     return 0;
   }
 
@@ -422,25 +508,28 @@ inline std::int16_t DJIMotor::Step(float dt_s) {
           ? external_speed_feedback_degps_
           : state_.feedback.output_speed_degps;
 
-  float target_current = state_.reference;
+  float target_current = 0.0f;
   switch (state_.outer_loop) {
     case DJIMotorOuterLoop::kAngle:
       state_.target_speed_degps =
           angle_pid_.Calculate(state_.reference, angle_feedback_deg, dt_s);
+      state_.target_speed_degps += config_.speed_feedforward;
       target_current = speed_pid_.Calculate(state_.target_speed_degps,
                                             speed_feedback_degps, dt_s);
+      target_current += config_.current_feedforward;
       break;
     case DJIMotorOuterLoop::kSpeed:
-      state_.target_speed_degps = state_.reference;
+      state_.target_speed_degps = state_.reference + config_.speed_feedforward;
       target_current =
-          speed_pid_.Calculate(state_.reference, speed_feedback_degps, dt_s);
+          speed_pid_.Calculate(state_.target_speed_degps, speed_feedback_degps,
+                               dt_s);
+      target_current += config_.current_feedforward;
       break;
     case DJIMotorOuterLoop::kCurrent:
     default:
       state_.target_speed_degps = 0.0f;
-      target_current =
-          current_pid_.Calculate(state_.reference,
-                                 static_cast<float>(state_.feedback.real_current), dt_s);
+      // 电流外环表示直接电流参考，避免模块层隐式改变上层控制语义。
+      target_current = state_.reference + config_.current_feedforward;
       break;
   }
 

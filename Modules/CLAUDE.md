@@ -37,8 +37,8 @@
 
 | 模块 | 文件 | 描述 | 硬件需求 |
 |------|------|------|----------|
-| **DT7 (RemoteControl)** | `RemoteControl/DT7.hpp` | DJI DT7/DBUS 遥控器驱动。解析 18 字节 DBUS 帧，发布 `DT7State` | UART |
-| **VT13 (RemoteControl)** | `RemoteControl/VT13.hpp` | rmpp VT13 协议遥控器驱动。含 CRC 校验、模式解析 | UART |
+| **DT7** | `DT7/DT7.hpp` | DJI DT7/DBUS 遥控器驱动。解析 18 字节 DBUS 帧，发布 `DT7State` | UART |
+| **VT13** | `VT13/VT13.hpp` | rmpp VT13 协议遥控器驱动。含 CRC 校验、模式解析 | UART |
 | **MasterMachine** | `MasterMachine/MasterMachine.hpp` | 上位机 UART 桥接骨架。解析上位机命令帧，发布 `MasterMachineState`，超时安全回退 | UART |
 | **Referee** | `Referee/Referee.hpp` | RoboMaster 裁判系统 UART 接入骨架。发布 `RefereeState`（比赛状态/功率/热量/射频），离线回退保守默认 | UART |
 | **CANBridge** | `CANBridge/CANBridge.hpp` | CAN 桥接模块。收发 heartbeat 遥测帧、白名单校验、CRC8 校验，发布 `CANBridgeState` | CAN |
@@ -104,7 +104,7 @@ sources:
     priority: 0
 ```
 
-其余模块（DJIMotor, DMMotor, RemoteControl, Referee, MasterMachine, CANBridge, SuperCap, ShootFrictionMotorGroup, ShootLoaderMotor）为本地项目内模块。
+其余模块（DJIMotor, DMMotor, DT7, VT13, Referee, MasterMachine, CANBridge, SuperCap）为本地项目内模块，已按 XRobot 官方模块骨架补齐 `README.md`、`CMakeLists.txt` 与模块级 workflow。
 
 ---
 
@@ -121,11 +121,10 @@ Modules/
   BuzzerAlarm/BuzzerAlarm.hpp
   DJIMotor/DJIMotor.hpp
   DMMotor/DMMotor.hpp
-  RemoteControl/DT7.hpp, VT13.hpp
+  DT7/DT7.hpp
+  VT13/VT13.hpp
   Referee/Referee.hpp
   MasterMachine/MasterMachine.hpp
   CANBridge/CANBridge.hpp
   SuperCap/SuperCap.hpp
-  ShootFrictionMotorGroup/ShootFrictionMotorGroup.hpp
-  ShootLoaderMotor/ShootLoaderMotor.hpp
 ```

@@ -55,7 +55,7 @@ CAN:
     queue_size: 5
 USB:
   usb_otg_fs:
-    enable: false
+    enable: true
 Terminal:
   read_buff_size: 32
   max_line_size: 32

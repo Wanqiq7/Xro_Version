@@ -10,6 +10,11 @@ struct GimbalState {
   float pitch_deg = 0.0f;
   float yaw_rate_degps = 0.0f;
   float pitch_rate_degps = 0.0f;
+  float relative_yaw_deg = 0.0f;
+  float target_yaw_deg = 0.0f;
+  float target_pitch_deg = 0.0f;
+  float yaw_error_deg = 0.0f;
+  float pitch_error_deg = 0.0f;
 };
 
 }  // namespace App

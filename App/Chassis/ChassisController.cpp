@@ -277,10 +277,12 @@ ChassisController::ChassisController(LibXR::ApplicationManager& appmgr,
                                      LibXR::Topic& robot_mode_topic,
                                      LibXR::Topic& gimbal_state_topic,
                                      LibXR::Topic& chassis_state_topic,
+                                     LibXR::Topic::Domain& app_topic_domain,
                                      DJIMotor& front_left_motor,
                                      DJIMotor& front_right_motor,
                                      DJIMotor& rear_left_motor,
-                                     DJIMotor& rear_right_motor)
+                                     DJIMotor& rear_right_motor,
+                                     SuperCap& super_cap)
     : ControllerBase(appmgr),
       motion_command_(motion_command),
       chassis_state_topic_(chassis_state_topic),
@@ -290,16 +292,17 @@ ChassisController::ChassisController(LibXR::ApplicationManager& appmgr,
           &rear_left_motor,
           &rear_right_motor,
       },
+      super_cap_(&super_cap),
       robot_mode_subscriber_(robot_mode_topic),
       gimbal_state_subscriber_(gimbal_state_topic),
+      ins_state_subscriber_(AppConfig::kInsStateTopicName, &app_topic_domain),
       referee_subscriber_(AppConfig::kRefereeStateTopicName),
-      gyro_subscriber_(AppConfig::kBmi088GyroTopicName),
-      accl_subscriber_(AppConfig::kBmi088AcclTopicName) {
+      super_cap_subscriber_(SuperCap::kTopicName) {
   robot_mode_subscriber_.StartWaiting();
   gimbal_state_subscriber_.StartWaiting();
+  ins_state_subscriber_.StartWaiting();
   referee_subscriber_.StartWaiting();
-  gyro_subscriber_.StartWaiting();
-  accl_subscriber_.StartWaiting();
+  super_cap_subscriber_.StartWaiting();
 
   for (auto* motor : wheel_motors_) {
     if (motor == nullptr) {
@@ -324,59 +327,74 @@ void ChassisController::PullTopicData() {
     gimbal_state_subscriber_.StartWaiting();
   }
 
+  if (ins_state_subscriber_.Available()) {
+    ins_state_ = ins_state_subscriber_.GetData();
+    ins_state_subscriber_.StartWaiting();
+  }
+
   if (referee_subscriber_.Available()) {
     referee_state_ = referee_subscriber_.GetData();
     referee_subscriber_.StartWaiting();
   }
 
-  if (gyro_subscriber_.Available()) {
-    gyro_data_ = gyro_subscriber_.GetData();
-    gyro_subscriber_.StartWaiting();
-    has_gyro_sample_ = true;
+  if (super_cap_subscriber_.Available()) {
+    super_cap_state_ = super_cap_subscriber_.GetData();
+    super_cap_subscriber_.StartWaiting();
   }
-
-  if (accl_subscriber_.Available()) {
-    accl_data_ = accl_subscriber_.GetData();
-    accl_subscriber_.StartWaiting();
-  }
-}
-
-void ChassisController::UpdateRelativeYawEstimate(
-    LibXR::MicrosecondTimestamp now_us) {
-  if (has_gyro_sample_ && last_yaw_update_us_ != 0) {
-    const float dt_s = (now_us - last_yaw_update_us_).ToSecondf();
-    chassis_state_.relative_yaw_deg = IntegrateYawDeg(
-        chassis_state_.relative_yaw_deg, gyro_data_.z(), dt_s);
-  }
-  last_yaw_update_us_ = now_us;
 }
 
 void ChassisController::UpdateWheelControl() {
   const RefereeConstraintView referee_constraints =
       BuildRefereeConstraintView(referee_state_);
+  const bool has_yaw_feedback = ins_state_.online && ins_state_.gyro_online;
   applied_motion_command_ = BuildAppliedMotionCommand(
       robot_mode_, motion_command_, actuator_config_,
-      chassis_state_.relative_yaw_deg, has_gyro_sample_, gimbal_state_);
-  applied_motion_command_.power_limited = referee_constraints.power_limited;
-  applied_motion_command_.chassis_power_limit_w =
-      referee_constraints.chassis_power_limit_w;
-  // bring-up 语义：裁判离线不阻断底盘运动验证；发射许可仍由 referee_allows_fire 保守约束。
-  if (referee_constraints.motion_scale <= 0.0f) {
-    applied_motion_command_.motion_mode = MotionModeType::kStop;
-    applied_motion_command_.vx_mps = 0.0f;
-    applied_motion_command_.vy_mps = 0.0f;
-    applied_motion_command_.wz_radps = 0.0f;
-  } else {
-    applied_motion_command_.vx_mps *= referee_constraints.motion_scale;
-    applied_motion_command_.vy_mps *= referee_constraints.motion_scale;
-    applied_motion_command_.wz_radps *= referee_constraints.motion_scale;
-  }
+      ins_state_.yaw_deg, has_yaw_feedback, gimbal_state_);
+  const auto requested_wheel_speed_radps =
+      SolveWheelTargets(applied_motion_command_, actuator_config_);
+  const auto current_wheel_speed_radps = ReadWheelSpeedRadps(wheel_motors_);
+  const auto current_cmd_raw = ReadWheelCurrentCommandRaw(wheel_motors_);
+  const auto motor_speed_rpm = ReadWheelRotorSpeedRpm(wheel_motors_);
+  const auto power_limited_output = power_limiter_.Apply(
+      ChassisPowerLimiter::Input{
+          .command = applied_motion_command_,
+          .referee = referee_constraints,
+          .super_cap = super_cap_state_,
+          .current_wheel_speed_radps = current_wheel_speed_radps,
+          .target_wheel_speed_radps = requested_wheel_speed_radps,
+          .current_cmd_raw = current_cmd_raw,
+          .motor_speed_rpm = motor_speed_rpm,
+      });
+  applied_motion_command_ = power_limited_output.command;
   output_enabled_ = IsChassisReady(robot_mode_) &&
                     applied_motion_command_.motion_mode !=
                         MotionModeType::kStop;
-  target_wheel_speed_radps_ = SolveWheelTargets(
-      applied_motion_command_, actuator_config_);
+  target_wheel_speed_radps_ = power_limited_output.target_wheel_speed_radps;
   ApplyWheelTargets(wheel_motors_, target_wheel_speed_radps_, output_enabled_);
+
+  SendSuperCapCommand(referee_constraints);
+}
+
+void ChassisController::SendSuperCapCommand(
+    const RefereeConstraintView& referee) {
+  if (super_cap_ == nullptr) {
+    return;
+  }
+
+  super_cap_cmd_counter_ =
+      (super_cap_cmd_counter_ + 1) % power_limiter_config_.super_cap_cmd_interval;
+  if (super_cap_cmd_counter_ != 0) {
+    return;
+  }
+
+  const bool enable_dcdc = referee.referee_online && referee.buffer_energy > 0;
+  const auto power_limit_w =
+      static_cast<std::uint16_t>(std::min(referee.chassis_power_limit_w, 65535.0f));
+  const auto energy_buffer_j =
+      static_cast<std::uint16_t>(std::min(
+          static_cast<unsigned>(referee.buffer_energy), 65535U));
+
+  super_cap_->SendCommand(enable_dcdc, power_limit_w, energy_buffer_j);
 }
 
 void ChassisController::UpdateChassisState(
@@ -396,13 +414,13 @@ void ChassisController::UpdateChassisState(
       estimate_state_,
       EstimateInput{
           .wheel_feedback_valid = wheel_feedback_valid,
-          .yaw_feedback_valid = has_gyro_sample_,
+          .yaw_feedback_valid = ins_state_.online && ins_state_.gyro_online,
           .output_enabled = output_enabled_,
           .dt_s = estimate_dt_s,
           .wheel_vx_mps = wheel_estimate.vx_mps,
           .wheel_vy_mps = wheel_estimate.vy_mps,
           .wheel_wz_radps = wheel_estimate.wz_radps,
-          .gyro_wz_radps = gyro_data_.z(),
+          .gyro_wz_radps = ins_state_.yaw_rate_degps * kDegToRad,
           .command_vx_mps = applied_motion_command_.vx_mps,
           .command_vy_mps = applied_motion_command_.vy_mps,
           .command_wz_radps = applied_motion_command_.wz_radps,
@@ -410,9 +428,10 @@ void ChassisController::UpdateChassisState(
 
   chassis_state_.online = any_wheel_online;
   chassis_state_.ready = IsChassisReady(robot_mode_);
-  chassis_state_.feedback_online = has_gyro_sample_ || any_wheel_online;
+  chassis_state_.feedback_online =
+      (ins_state_.online && ins_state_.gyro_online) || any_wheel_online;
   chassis_state_.velocity_feedback_valid = wheel_feedback_valid;
-  chassis_state_.yaw_feedback_valid = has_gyro_sample_;
+  chassis_state_.yaw_feedback_valid = ins_state_.online && ins_state_.gyro_online;
 
   chassis_state_.command_vx_mps = applied_motion_command_.vx_mps;
   chassis_state_.command_vy_mps = applied_motion_command_.vy_mps;
@@ -425,6 +444,9 @@ void ChassisController::UpdateChassisState(
   chassis_state_.vx_mps = chassis_state_.estimated_vx_mps;
   chassis_state_.vy_mps = chassis_state_.estimated_vy_mps;
   chassis_state_.wz_radps = chassis_state_.feedback_wz_radps;
+  chassis_state_.relative_yaw_deg =
+      gimbal_state_.online ? gimbal_state_.relative_yaw_deg
+                           : chassis_state_.relative_yaw_deg;
   chassis_state_.yaw_deg = chassis_state_.relative_yaw_deg;
 
   chassis_state_topic_.Publish(chassis_state_);
@@ -434,7 +456,6 @@ void ChassisController::OnMonitor() {
   PullTopicData();
 
   const auto now_us = LibXR::Timebase::GetMicroseconds();
-  UpdateRelativeYawEstimate(now_us);
   UpdateWheelControl();
   UpdateChassisState(now_us);
 }

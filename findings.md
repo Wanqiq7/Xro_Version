@@ -465,3 +465,29 @@
   - 需要后续做 `CAN1 + 0x051 / 0x061` 的板上实测
   - 如果后续要把 `super_cap` 变成健康摘要中的更强语义，才考虑 `supercap_degraded`
   - 如果后续要让它进入控制链，必须单独立项
+
+## 2026-04-28 referee / master_machine / can_comm Controller Rebind
+
+- 当前真实代码已经切到 `Controller` 体系，旧计划中的 `InputRole / DecisionRole / TelemetryRole` 名称只能作为历史记录，不应继续指导新实现。
+- `RefereeConstraintView` 已被 `DecisionController` 使用来裁剪 `FireCommand.fire_enable`，裁判 fire gate 不再只依赖 `ShootController` 的二次兜底。
+- `MasterMachineState` 中已有 `vision_target_*` 字段，本轮将其作为白名单控制的 aim lane 输入：
+  - 只有 `MasterMachineInputField::kVisionTarget` 允许且目标有效时才启用；
+  - 启用后 `OperatorInputSnapshot.track_target = true`；
+  - `DecisionController` 将其映射为 `AimModeType::kAutoTrack`。
+- `OperatorInputSnapshot` 新增 `control_source`，使 `DT7 / VT13 / MasterMachine` 分别能表达为 `Remote / KeyboardMouse / Host`。
+- `CANBridge` 本轮保持模块通用能力边界，只增加状态只读访问口；没有把 CAN payload 绑定到任何 App 业务命令。
+
+## 2026-04-28 master_machine status feedback loop
+
+- 新增 `App/Cmd/MasterMachineBridgeController` 作为 App 层桥接控制器，职责是把稳定状态折叠成 `MasterMachine::VisionStatusSummary` 并调用 `SendVisionStatus()`。
+- blocking 风险 `MasterMachineConfig.direction = kRxOnly` 没有通过修改全局默认解决，而是在 `AppRuntime` 局部 `MakeMasterMachineConfig()` 中提升为 `kBidirectional`，从而保留 RX 并允许最小 TX 回传闭环。
+- 为避免跨线程直接读 `master_machine_.State()` 带来的竞态，控制器最终订阅了 `master_machine_.StateTopic()`，而不是长期持有模块内部状态引用。
+- 当前回传字段采用保守映射：
+  - `enemy_color = 0`
+  - `work_mode` <- `RobotMode`
+  - `target_type` <- `MasterMachineState.vision_target_type`（仅当在线且目标有效）
+  - `target_locked` <- `online && vision_target_valid && gimbal_state.ready && aim_mode == kAutoTrack`
+  - `bullet_speed_mps` <- `ShootState.bullet_speed_mps`（仅 `shoot_state.ready`）
+  - `robot_yaw_deg` <- `InsState.yaw_deg`（需 `online && gyro_online`）
+  - `robot_pitch_deg / roll_deg` <- `InsState`（需 `online && accl_online`）
+- 当前回传路径新增了 50ms 节流，避免按 `OnMonitor()` 每拍都写 UART。

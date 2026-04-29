@@ -10,6 +10,8 @@ struct AppConfig {
   static constexpr const char* kChassisStateTopicName = "chassis_state";
   static constexpr const char* kGimbalStateTopicName = "gimbal_state";
   static constexpr const char* kShootStateTopicName = "shoot_state";
+  static constexpr const char* kInsStateTopicName = "ins_state";
+  static constexpr const char* kSystemHealthTopicName = "system_health";
 
   // 模块私有 Topic 名称集中在这里，避免 App 控制器散落硬编码契约。
   static constexpr const char* kBmi088GyroTopicName = "bmi088_gyro";

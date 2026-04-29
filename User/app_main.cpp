@@ -17,6 +17,7 @@
 #include "stm32_uart.hpp"
 #include "stm32_usb_dev.hpp"
 #include "stm32_watchdog.hpp"
+#include "usb_otg.h"
 #include "flash_map.hpp"
 #include "app_framework.hpp"
 #include "xrobot_main.hpp"
@@ -24,6 +25,20 @@
 using namespace LibXR;
 
 /* User Code Begin 1 */
+namespace {
+
+constexpr auto kUsbLanguagePack =
+    LibXR::USB::DescriptorStrings::MakeLanguagePack(
+        LibXR::USB::DescriptorStrings::Language::EN_US, "XRobot",
+        "XRobot MasterMachine VCP", "XROBOT-MM-0001");
+
+alignas(4) std::uint8_t usb_ep0_out_buffer[64];
+alignas(4) std::uint8_t usb_cdc_out_buffer[64];
+alignas(4) std::uint8_t usb_ep0_in_buffer[64];
+alignas(4) std::uint8_t usb_cdc_in_buffer[64];
+alignas(4) std::uint8_t usb_cdc_comm_in_buffer[16];
+
+}  // namespace
 /* User Code End 1 */
 // NOLINTBEGIN
 // clang-format off
@@ -126,6 +141,28 @@ extern "C" void app_main(void) {
 
   STM32CAN can2(&hcan2, 5);
 
+  LibXR::USB::CDCUart vcp_master_machine(256, 256, 5);
+  STM32USBDeviceOtgFS usb_otg_fs(
+      &hpcd_USB_OTG_FS, 128,
+      {
+          LibXR::RawData{usb_ep0_out_buffer, sizeof(usb_ep0_out_buffer)},
+          LibXR::RawData{usb_cdc_out_buffer, sizeof(usb_cdc_out_buffer)},
+      },
+      {
+          STM32USBDeviceOtgFS::EPInConfig{
+              LibXR::RawData{usb_ep0_in_buffer, sizeof(usb_ep0_in_buffer)}, 64},
+          STM32USBDeviceOtgFS::EPInConfig{
+              LibXR::RawData{usb_cdc_in_buffer, sizeof(usb_cdc_in_buffer)}, 64},
+          STM32USBDeviceOtgFS::EPInConfig{
+              LibXR::RawData{usb_cdc_comm_in_buffer,
+                             sizeof(usb_cdc_comm_in_buffer)},
+              16},
+      },
+      LibXR::USB::DeviceDescriptor::PacketSize0::SIZE_64, 0x0483, 0x5740,
+      0x0200, {&kUsbLanguagePack}, {{&vcp_master_machine}});
+  usb_otg_fs.Init(false);
+  usb_otg_fs.Start(false);
+
   /* Terminal Configuration */
 
 
@@ -175,6 +212,7 @@ extern "C" void app_main(void) {
   peripherals.Register(Entry<PWM>{pwm_tim10_ch1, {"pwm_bmi088_heat"}});
   peripherals.Register(Entry<SPI>{spi1, {"spi_bmi088", "SPI1"}});
   peripherals.Register(Entry<UART>{usart1, {"uart_master_machine", "USART1"}});
+  peripherals.Register(Entry<UART>{vcp_master_machine, {"vcp_master_machine"}});
   peripherals.Register(Entry<UART>{usart2, {"uart_vt13", "USART2"}});
   peripherals.Register(Entry<UART>{usart3, {"USART3"}});
   peripherals.Register(Entry<UART>{usart6, {"uart_referee", "USART6"}});

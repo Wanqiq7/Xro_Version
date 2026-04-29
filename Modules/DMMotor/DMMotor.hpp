@@ -163,6 +163,8 @@ class DMMotor : public LibXR::Application {
 
   void StepCascadePid(float dt_s);
 
+  void EnterSafeStop();
+
   void HandleControlCommand(DMMotorControlCommand command);
 
   void SendControlCommand(DMMotorControlCommand command);
@@ -207,6 +209,15 @@ inline DMMotor::DMMotor(LibXR::HardwareContainer& hw,
 
 inline void DMMotor::OnMonitor() {
   UpdateOnlineStatus();
+  if (!feedback_.online) {
+    EnterSafeStop();
+    return;
+  }
+
+  if (state_.enabled) {
+    state_.safe_stopped = false;
+  }
+
   CheckAutoReEnable();
   if (state_.outer_loop != DMMotorOuterLoop::kMIT) {
     const float dt_s = ComputeDeltaTimeSeconds();
@@ -233,15 +244,9 @@ inline void DMMotor::Stop() {
 
 inline void DMMotor::Disable() {
   command_.control = DMMotorControlCommand::kStop;
-  has_mit_command_ = false;
   state_.enabled = false;
-  state_.safe_stopped = true;
   state_.reference = 0.0f;
-  state_.target_speed_radps = 0.0f;
-  state_.target_torque_nm = 0.0f;
-  speed_pid_.Reset();
-  angle_pid_.Reset();
-  last_control_time_us_ = 0;
+  EnterSafeStop();
   HandleControlCommand(DMMotorControlCommand::kStop);
 }
 
@@ -378,6 +383,22 @@ inline void DMMotor::StepCascadePid(float dt_s) {
 
   state_.target_torque_nm = target_torque;
   SetMITCommand(0.0f, 0.0f, 0.0f, 0.0f, target_torque);
+}
+
+inline void DMMotor::EnterSafeStop() {
+  has_mit_command_ = false;
+  command_.position = 0.0f;
+  command_.velocity = 0.0f;
+  command_.kp = 0.0f;
+  command_.kd = 0.0f;
+  command_.torque = 0.0f;
+  command_.control = DMMotorControlCommand::kNone;
+  state_.safe_stopped = true;
+  state_.target_speed_radps = 0.0f;
+  state_.target_torque_nm = 0.0f;
+  speed_pid_.Reset();
+  angle_pid_.Reset();
+  last_control_time_us_ = 0;
 }
 
 inline void DMMotor::OnCanRxStatic(bool, DMMotor* self,

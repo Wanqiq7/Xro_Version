@@ -8,6 +8,7 @@
 #include "../Topics/FireCommand.hpp"
 #include "../Topics/MotionCommand.hpp"
 #include "../Topics/RobotMode.hpp"
+#include "../Topics/SystemHealth.hpp"
 
 namespace App {
 
@@ -19,6 +20,7 @@ class DecisionController : public ControllerBase {
                      AimCommand& aim_command,
                      FireCommand& fire_command,
                      LibXR::Topic& robot_mode_topic,
+                     LibXR::Topic& system_health_topic,
                      Referee& referee);
 
   void OnMonitor() override;
@@ -41,7 +43,9 @@ class DecisionController : public ControllerBase {
   LibXR::Topic& robot_mode_topic_;
   Referee& referee_;
   RefereeState referee_state_{};
+  SystemHealth system_health_{};
   LibXR::Topic::ASyncSubscriber<RefereeState> referee_subscriber_;
+  LibXR::Topic::ASyncSubscriber<SystemHealth> system_health_subscriber_;
 };
 
 }  // namespace App

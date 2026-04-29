@@ -3,121 +3,92 @@
 #include <cstdint>
 
 #include "../Config/BridgeConfig.hpp"
-#include "../../Modules/RemoteControl/DT7.hpp"
-#include "../../Modules/RemoteControl/VT13.hpp"
+#include "../Config/InputConfig.hpp"
+#include "../../Modules/DT7/DT7.hpp"
+#include "../../Modules/VT13/VT13.hpp"
 
 namespace {
 
-constexpr float kStickMaxMagnitude = 660.0f;
-constexpr float kMaxYawDeg = 180.0f;
-constexpr float kMaxPitchDeg = 30.0f;
-constexpr float kMaxChassisLinearSpeedMps = 2.0f;
-constexpr float kDefaultBulletSpeedMps = 30.0f;
-constexpr float kDefaultShootRateHz = 8.0f;
-
-inline float NormalizeStick(int16_t value) {
-  if (value > kStickMaxMagnitude) {
-    return 1.0f;
+App::RemoteSwitchPosition MapDT7Switch(::RemoteSwitchPosition position) {
+  switch (position) {
+    case ::RemoteSwitchPosition::kUp:
+      return App::RemoteSwitchPosition::kUp;
+    case ::RemoteSwitchPosition::kMiddle:
+      return App::RemoteSwitchPosition::kMiddle;
+    case ::RemoteSwitchPosition::kDown:
+      return App::RemoteSwitchPosition::kDown;
+    case ::RemoteSwitchPosition::kUnknown:
+    default:
+      return App::RemoteSwitchPosition::kUnknown;
   }
-  if (value < -kStickMaxMagnitude) {
-    return -1.0f;
+}
+
+App::VT13Mode MapVT13Mode(::VT13Mode mode) {
+  switch (mode) {
+    case ::VT13Mode::kC:
+      return App::VT13Mode::kC;
+    case ::VT13Mode::kN:
+      return App::VT13Mode::kN;
+    case ::VT13Mode::kS:
+      return App::VT13Mode::kS;
+    case ::VT13Mode::kErr:
+    default:
+      return App::VT13Mode::kErr;
   }
-  return static_cast<float>(value) / kStickMaxMagnitude;
 }
 
-inline bool IsSafeRequested(const DT7State& state) {
-  return !state.online ||
-         state.right_switch == RemoteSwitchPosition::kDown ||
-         state.right_switch == RemoteSwitchPosition::kUnknown;
+std::int16_t ScaleUnitToStick(float value) {
+  if (value > 1.0f) {
+    value = 1.0f;
+  } else if (value < -1.0f) {
+    value = -1.0f;
+  }
+  return static_cast<std::int16_t>(value * App::InputConfig::kStickMaxMagnitude);
 }
 
-inline bool IsManualRequested(const DT7State& state) {
-  return state.online && !IsSafeRequested(state);
+App::DT7InputState ToDT7InputState(const DT7State& state) {
+  return App::DT7InputState{
+      .online = state.online,
+      .left_switch = MapDT7Switch(state.left_switch),
+      .right_switch = MapDT7Switch(state.right_switch),
+      .left_x = state.left_x,
+      .left_y = state.left_y,
+      .right_x = state.right_x,
+      .right_y = state.right_y,
+      .dial = state.dial,
+      .mouse_x_delta = state.mouse_x,
+      .mouse_y_delta = state.mouse_y,
+      .mouse_left_button = state.mouse_left_pressed,
+      .mouse_right_button = state.mouse_right_pressed,
+      .keyboard_key_code = state.keyboard_key_code,
+  };
 }
 
-inline bool IsFrictionEnabled(const DT7State& state) {
-  return IsManualRequested(state) &&
-         state.left_switch == RemoteSwitchPosition::kUp;
-}
-
-inline bool IsFireEnabled(const DT7State& state) {
-  return IsFrictionEnabled(state) && state.mouse_left_pressed;
-}
-
-inline bool IsSafeRequestedVT13(const VT13State& state) {
-  return !state.online || state.mode == VT13Mode::kC ||
-         state.mode == VT13Mode::kErr;
-}
-
-inline bool IsManualRequestedVT13(const VT13State& state) {
-  return state.online &&
-         (state.mode == VT13Mode::kN || state.mode == VT13Mode::kS);
-}
-
-inline bool IsFrictionEnabledVT13(const VT13State& state) {
-  return state.online && state.mode == VT13Mode::kS;
-}
-
-inline bool IsFireEnabledVT13(const VT13State& state) {
-  return IsFrictionEnabledVT13(state) && state.trigger;
-}
-
-inline void ApplySafeSnapshot(App::OperatorInputSnapshot& input) {
-  input.has_active_source = false;
-  input.request_safe_mode = true;
-  input.request_manual_mode = false;
-  input.fire_enabled = false;
-  input.friction_enabled = false;
-  input.target_bullet_speed_mps = 0.0f;
-  input.target_shoot_rate_hz = 0.0f;
-  input.target_vx_mps = 0.0f;
-  input.target_vy_mps = 0.0f;
-  input.target_wz_radps = 0.0f;
-  input.target_yaw_deg = 0.0f;
-  input.target_pitch_deg = 0.0f;
-  input.track_target = false;
-}
-
-inline void ApplyDT7Snapshot(const DT7State& remote_state,
-                             App::OperatorInputSnapshot& input) {
-  input.request_safe_mode = IsSafeRequested(remote_state);
-  input.request_manual_mode = IsManualRequested(remote_state);
-  input.fire_enabled = IsFireEnabled(remote_state);
-  input.friction_enabled = IsFrictionEnabled(remote_state);
-  input.target_bullet_speed_mps =
-      input.friction_enabled ? kDefaultBulletSpeedMps : 0.0f;
-  input.target_shoot_rate_hz = input.fire_enabled ? kDefaultShootRateHz : 0.0f;
-
-  input.target_vx_mps =
-      NormalizeStick(remote_state.left_y) * kMaxChassisLinearSpeedMps;
-  input.target_vy_mps =
-      NormalizeStick(remote_state.left_x) * kMaxChassisLinearSpeedMps;
-  input.target_wz_radps = 0.0f;
-
-  input.target_yaw_deg =
-      NormalizeStick(remote_state.right_x) * kMaxYawDeg;
-  input.target_pitch_deg =
-      -NormalizeStick(remote_state.right_y) * kMaxPitchDeg;
-  input.track_target = false;
-}
-
-inline void ApplyVT13Snapshot(const VT13State& vt13_state,
-                              App::OperatorInputSnapshot& input) {
-  input.request_safe_mode = IsSafeRequestedVT13(vt13_state);
-  input.request_manual_mode = IsManualRequestedVT13(vt13_state);
-  input.fire_enabled = IsFireEnabledVT13(vt13_state);
-  input.friction_enabled = IsFrictionEnabledVT13(vt13_state);
-  input.target_bullet_speed_mps =
-      input.friction_enabled ? kDefaultBulletSpeedMps : 0.0f;
-  input.target_shoot_rate_hz = input.fire_enabled ? kDefaultShootRateHz : 0.0f;
-
-  input.target_vx_mps = vt13_state.y * kMaxChassisLinearSpeedMps;
-  input.target_vy_mps = vt13_state.x * kMaxChassisLinearSpeedMps;
-  input.target_wz_radps = 0.0f;
-
-  input.target_yaw_deg = vt13_state.yaw * kMaxYawDeg;
-  input.target_pitch_deg = vt13_state.pitch * kMaxPitchDeg;
-  input.track_target = false;
+App::VT13InputState ToVT13InputState(const VT13State& state) {
+  return App::VT13InputState{
+      .online = state.online,
+      .mode = MapVT13Mode(state.mode),
+      .x = ScaleUnitToStick(state.x),
+      .y = ScaleUnitToStick(state.y),
+      .yaw = ScaleUnitToStick(state.yaw),
+      .pitch = ScaleUnitToStick(state.pitch),
+      .wheel = ScaleUnitToStick(state.wheel),
+      .trigger = state.trigger,
+      .fn = state.fn,
+      .photo = state.photo,
+      .mouse_left_button = state.mouse.left,
+      .mouse_right_button = state.mouse.right,
+      .key_w = state.key.w,
+      .key_s = state.key.s,
+      .key_a = state.key.a,
+      .key_d = state.key.d,
+      .key_shift = state.key.shift,
+      .key_z = state.key.z,
+      .key_e = state.key.e,
+      .key_r = state.key.r,
+      .key_f = state.key.f,
+      .key_c = state.key.c,
+  };
 }
 
 struct MasterMachineCoordinationView {
@@ -151,26 +122,18 @@ namespace App {
 InputController::InputController(LibXR::ApplicationManager& appmgr,
                                  OperatorInputSnapshot& operator_input,
                                  DT7& primary_remote_control,
-                                 DT7* secondary_remote_control, VT13& vt13,
+                                 VT13& secondary_remote_control,
                                  MasterMachine& master_machine)
     : ControllerBase(appmgr),
       operator_input_(operator_input),
       primary_remote_control_(primary_remote_control),
       secondary_remote_control_(secondary_remote_control),
-      vt13_(vt13),
       master_machine_(master_machine),
       primary_remote_subscriber_(primary_remote_control_.StateTopic()),
-      vt13_subscriber_(vt13_.StateTopic()),
+      secondary_remote_subscriber_(secondary_remote_control_.StateTopic()),
       master_machine_subscriber_(master_machine_.StateTopic()) {
-  if (secondary_remote_control_ != nullptr) {
-    secondary_remote_subscriber_ =
-        std::make_unique<LibXR::Topic::ASyncSubscriber<DT7State>>(
-            secondary_remote_control_->StateTopic());
-    secondary_remote_subscriber_->StartWaiting();
-  }
-
   primary_remote_subscriber_.StartWaiting();
-  vt13_subscriber_.StartWaiting();
+  secondary_remote_subscriber_.StartWaiting();
   master_machine_subscriber_.StartWaiting();
 }
 
@@ -182,16 +145,17 @@ void InputController::Update() {
   PullInputTopicData();
 
   auto& input = operator_input_;
-  ApplySafeSnapshot(input);
-  input.has_active_source = false;
+  input = BuildSafeInputSnapshot();
 
   const auto selection = SelectActiveInput();
+  ResetInactiveInputLatches(selection);
   ApplySelectedInput(selection, input);
-  input.has_active_source = selection != InputSelection::kNone;
 
   if (ShouldUseMasterMachineOverride()) {
     ApplyMasterMachineOverride(input);
     input.has_active_source = true;
+  } else {
+    ResetMasterMachineOverrideLatch();
   }
 }
 
@@ -206,15 +170,9 @@ void InputController::PullInputTopicData() {
     primary_remote_subscriber_.StartWaiting();
   }
 
-  if (secondary_remote_subscriber_ != nullptr &&
-      secondary_remote_subscriber_->Available()) {
-    secondary_remote_state_ = secondary_remote_subscriber_->GetData();
-    secondary_remote_subscriber_->StartWaiting();
-  }
-
-  if (vt13_subscriber_.Available()) {
-    vt13_state_ = vt13_subscriber_.GetData();
-    vt13_subscriber_.StartWaiting();
+  if (secondary_remote_subscriber_.Available()) {
+    secondary_remote_state_ = secondary_remote_subscriber_.GetData();
+    secondary_remote_subscriber_.StartWaiting();
   }
 
   if (master_machine_subscriber_.Available()) {
@@ -224,19 +182,30 @@ void InputController::PullInputTopicData() {
 }
 
 InputController::InputSelection InputController::SelectActiveInput() const {
-  if (primary_remote_state_.online) {
-    return InputSelection::kPrimary;
+  switch (SelectInputSource(primary_remote_state_.online,
+                            secondary_remote_state_.online)) {
+    case InputSourceSelection::primary_dt7:
+      return InputSelection::kPrimaryDT7;
+    case InputSourceSelection::secondary_vt13:
+      return InputSelection::kSecondaryVT13;
+    case InputSourceSelection::none:
+    default:
+      return InputSelection::kNone;
+  }
+}
+
+void InputController::ResetInactiveInputLatches(InputSelection selection) {
+  if (selection != InputSelection::kPrimaryDT7) {
+    ResetInputLatch(primary_latch_);
   }
 
-  if (secondary_remote_state_.online) {
-    return InputSelection::kSecondary;
+  if (selection != InputSelection::kSecondaryVT13) {
+    ResetInputLatch(secondary_latch_);
   }
+}
 
-  if (vt13_state_.online) {
-    return InputSelection::kVT13;
-  }
-
-  return InputSelection::kNone;
+void InputController::ResetMasterMachineOverrideLatch() const {
+  master_machine_fire_request_latched_ = false;
 }
 
 bool InputController::ShouldUseMasterMachineOverride() const {
@@ -248,14 +217,13 @@ bool InputController::ShouldUseMasterMachineOverride() const {
 void InputController::ApplySelectedInput(InputSelection selection,
                                          OperatorInputSnapshot& input) const {
   switch (selection) {
-    case InputSelection::kPrimary:
-      ApplyDT7Snapshot(primary_remote_state_, input);
+    case InputSelection::kPrimaryDT7:
+      ApplyDT7Input(ToDT7InputState(primary_remote_state_), primary_latch_,
+                    input);
       break;
-    case InputSelection::kSecondary:
-      ApplyDT7Snapshot(secondary_remote_state_, input);
-      break;
-    case InputSelection::kVT13:
-      ApplyVT13Snapshot(vt13_state_, input);
+    case InputSelection::kSecondaryVT13:
+      ApplyVT13Input(ToVT13InputState(secondary_remote_state_),
+                     secondary_latch_, input);
       break;
     case InputSelection::kNone:
     default:
@@ -265,17 +233,48 @@ void InputController::ApplySelectedInput(InputSelection selection,
 
 void InputController::ApplyMasterMachineOverride(
     OperatorInputSnapshot& input) const {
+  const bool vision_target_allowed =
+      MasterMachineFieldEnabled(Config::MasterMachineInputField::kVisionTarget);
+  const bool vision_target_active =
+      vision_target_allowed && master_machine_state_.online &&
+      master_machine_state_.target_state != MasterMachineTargetState::kNoTarget;
+  const bool fire_field_allowed =
+      MasterMachineFieldEnabled(Config::MasterMachineInputField::kFireEnable);
+  const bool auto_fire_requested =
+      fire_field_allowed &&
+      master_machine_state_.fire_mode == MasterMachineFireMode::kAutoFire;
+  const bool fire_edge_requested =
+      fire_field_allowed && master_machine_state_.request_fire_enable;
+  const bool fire_request_rising_edge =
+      fire_edge_requested && !master_machine_fire_request_latched_;
+
+  master_machine_fire_request_latched_ = fire_edge_requested;
+
+  input.control_source = ControlSource::kHost;
   input.request_safe_mode = false;
   input.request_manual_mode = true;
-  input.fire_enabled =
-      MasterMachineFieldEnabled(Config::MasterMachineInputField::kFireEnable) &&
-      master_machine_state_.request_fire_enable;
+  input.requested_loader_mode = LoaderModeType::kStop;
+  input.requested_burst_count = 0;
+  input.shot_request_seq = master_machine_shot_request_seq_;
+  input.trigger_pressed = fire_edge_requested;
+  input.fire_enabled = auto_fire_requested || fire_edge_requested;
+
+  if (auto_fire_requested) {
+    input.requested_loader_mode = LoaderModeType::kContinuous;
+  } else if (fire_edge_requested) {
+    input.requested_loader_mode = LoaderModeType::kSingle;
+    if (fire_request_rising_edge) {
+      ++master_machine_shot_request_seq_;
+      input.shot_request_seq = master_machine_shot_request_seq_;
+    }
+  }
+
   input.friction_enabled = input.fire_enabled;
   input.target_bullet_speed_mps =
-      input.friction_enabled ? kDefaultBulletSpeedMps
+      input.friction_enabled ? InputConfig::kDefaultBulletSpeedMps
                              : 0.0f;
   input.target_shoot_rate_hz =
-      input.fire_enabled ? kDefaultShootRateHz : 0.0f;
+      input.fire_enabled ? InputConfig::kDefaultShootRateHz : 0.0f;
   input.target_vx_mps =
       MasterMachineFieldEnabled(Config::MasterMachineInputField::kTargetVx)
           ? master_machine_state_.target_vx_mps
@@ -285,6 +284,16 @@ void InputController::ApplyMasterMachineOverride(
           ? master_machine_state_.target_vy_mps
           : 0.0f;
   input.target_wz_radps = 0.0f;
+  input.target_yaw_deg = 0.0f;
+  input.target_pitch_deg = 0.0f;
+
+  if (vision_target_active) {
+    input.target_yaw_deg = master_machine_state_.vision_yaw_deg;
+    input.target_pitch_deg = master_machine_state_.vision_pitch_deg;
+    input.track_target = true;
+    return;
+  }
+
   input.target_yaw_deg =
       MasterMachineFieldEnabled(Config::MasterMachineInputField::kTargetYaw)
           ? master_machine_state_.target_yaw_deg
