@@ -486,7 +486,14 @@ void ChassisController::UpdateForceControl(
                  force_config_.max_wheel_tau_ref_nm);
   }
 
-  // Step 7: 功率限制
+  // Step 7: 功率限制（传入 dt_s 供能量环和 RLS 使用）
+  const auto now_us_power = LibXR::Timebase::GetMicroseconds();
+  const float power_dt_s =
+      last_power_update_us_ != 0
+          ? (now_us_power - last_power_update_us_).ToSecondf()
+          : 0.001f;
+  last_power_update_us_ = now_us_power;
+
   const auto power_limited_output = power_limiter_.Apply(
       ChassisPowerLimiter::Input{
           .command = applied_motion_command_,
@@ -497,10 +504,11 @@ void ChassisController::UpdateForceControl(
           .wheel_tau_ref_nm = wheel_tau_ref_nm_,
           .current_cmd_raw = current_cmd_raw,
           .motor_speed_rpm = motor_speed_rpm,
-      });
+      },
+      power_dt_s);
   applied_motion_command_ = power_limited_output.command;
 
-  // Step 8: 下发扭矩
+  // Step 8: 下发扭矩（使用功率限制后的 tau，直接接管电流输出）
   ApplyWheelTorques(wheel_motors_, power_limited_output.limited_wheel_tau_ref_nm,
                     output_enabled_, force_config_.torque_constant_nm_per_a);
 

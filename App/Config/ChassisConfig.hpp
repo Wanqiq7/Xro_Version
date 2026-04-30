@@ -123,6 +123,50 @@ struct ChassisPowerLimiterConfig {
 
 inline constexpr ChassisPowerLimiterConfig kChassisPowerLimiterConfig{};
 
+// ==========================================================================
+// 功率控制器配置（HKUST 双环：能量环 + 功率环 + RLS）
+// ==========================================================================
+struct ChassisPowerControllerConfig {
+  // ---- 功率模型初始参数 ----
+  float k1_init = 0.22f;     // 转速损耗系数
+  float k2_init = 1.2f;      // 力矩平方损耗系数
+  float k3 = 2.78f;          // 静态损耗 (W)
+
+  // ---- 能量环 PD 参数 ----
+  float energy_kp = 50.0f;   // 能量环比例增益
+  float energy_kd = 0.2f;    // 能量环微分增益
+  float energy_out_limit = 300.0f;  // 能量环输出上限 (W) = MAX_CAP_POWER_OUT
+
+  // ---- 能量缓冲目标值 ----
+  float cap_full_buff = 230.0f;   // 电容满能量目标（原始值 0-255）
+  float cap_base_buff = 30.0f;    // 电容基准能量目标
+  float referee_full_buff = 60.0f; // 裁判系统满缓冲 (J)
+  float referee_base_buff = 50.0f; // 裁判系统基准缓冲 (J)
+
+  // ---- 功率分配参数 ----
+  float error_distribution_threshold = 20.0f;  // 误差置信度上限 (rad/s)
+  float prop_distribution_threshold = 15.0f;   // 误差置信度下限 (rad/s)
+
+  // ---- RLS 自适应参数 ----
+  float rls_delta = 1e-5f;       // RLS 协方差矩阵初始化值
+  float rls_lambda = 0.9999f;    // RLS 遗忘因子
+  float rls_dead_zone = 5.0f;    // RLS 更新死区 (W)，实测功率低于此值不更新
+
+  // ---- 容错参数 ----
+  float cap_max_power_out = 300.0f;               // 电容最大输出功率 (W)
+  float cap_offline_energy_runout_power = 43.0f;  // 判定电容能量耗尽的功率阈值 (W)
+  float cap_offline_energy_target_power = 37.0f;  // 电容离线时估算充电功率 (W)
+  float referee_gg_coe = 0.95f;                   // 仅裁判系统断连时的功率衰减系数
+  float cap_referee_both_gg_coe = 0.85f;          // 双断时的功率衰减系数
+  float min_max_power_ratio = 0.8f;               // MIN_MAXPOWER = refereeMaxPower * ratio
+  float referee_max_buffer_j = 60.0f;             // 裁判系统最大缓冲能量
+
+  // ---- 电机断连容错 ----
+  uint16_t motor_disconnect_timeout = 1000;  // 电机断连后仍计算功率的窗口 (ms)
+};
+
+inline constexpr ChassisPowerControllerConfig kChassisPowerControllerConfig{};
+
 // motor_number: 1-4 对应 CAN ID 0x201-0x204（组基址 0x200）
 inline constexpr DJIMotorGroupConfig kChassisMotorGroupConfig{
     .can_name = "can1",

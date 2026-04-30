@@ -25,6 +25,8 @@ depends: []
 #include "utils/crc.hpp"
 #include "uart.hpp"
 
+using LibXR::ErrorCode;
+
 /**
  * @brief referee 模块私有状态
  *

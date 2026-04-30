@@ -18,6 +18,8 @@ depends: []
 #include "app_framework.hpp"
 #include "libxr_def.hpp"
 #include "libxr_rw.hpp"
+
+using LibXR::ErrorCode;
 #include "message.hpp"
 #include "semaphore.hpp"
 #include "thread.hpp"

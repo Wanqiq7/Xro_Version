@@ -27,6 +27,7 @@ struct RefereeConstraintView {
   bool shooter_heat_valid = false;
   bool buffer_energy_valid = false;
   bool self_color_known = false;
+  float chassis_power_w = 0.0f;
   float chassis_power_limit_w = 0.0f;
   float motion_scale = 1.0f;
   float max_fire_rate_hz = 0.0f;
@@ -200,6 +201,7 @@ constexpr RefereeConstraintView BuildRefereeConstraintView(
       .shooter_heat_valid = shooter_heat_valid,
       .buffer_energy_valid = buffer_energy_valid,
       .self_color_known = self_color != RefereeCampColor::kUnknown,
+      .chassis_power_w = referee_state.chassis_power_w,
       .chassis_power_limit_w = referee_state.chassis_power_limit_w,
       .motion_scale = motion_scale,
       .max_fire_rate_hz = max_fire_rate_hz,

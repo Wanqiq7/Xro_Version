@@ -4,123 +4,73 @@
 #include <array>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 
 namespace App {
 
+// ==========================================================================
+// 电机功率模型系数（HKUST 模型）
+// P_i = tau_i * omega_i + k1 * |omega_i| + k2 * tau_i^2 + k3 / n
+// ==========================================================================
 struct ChassisMotorPowerModel {
   static constexpr std::size_t kMotorCount = 4;
 
-  // 这些系数来自 donor PowerControl，用于估算 M3508 底盘电机机械功率。
-  static constexpr float kTorqueCoef = 0.0003662109375f;
-  static constexpr float kPowerCoef = 187.0f / 3591.0f / 9.55f;
-  static constexpr std::array<float, kMotorCount> kK1{
-      1.23e-07f, 1.23e-07f, 1.23e-07f, 1.23e-07f};
-  static constexpr std::array<float, kMotorCount> kK2{
-      1.453e-07f, 1.453e-07f, 1.453e-07f, 1.453e-07f};
-  static constexpr std::array<float, kMotorCount> kConstant{
-      4.081f, 4.081f, 4.081f, 4.081f};
+  // ---- 模型参数（默认值来自 HKUST Mecanum_and_Omni）----
+  static constexpr float kDefaultK1 = 0.22f;   // 转速损耗系数 (W/(rad/s))
+  static constexpr float kDefaultK2 = 1.2f;    // 力矩平方损耗系数 (W/(Nm)²)
+  static constexpr float kDefaultK3 = 2.78f;   // 静态损耗 (W)
 };
 
+// ==========================================================================
+// 逐轮功率分配结果
+// ==========================================================================
 struct ChassisPowerAllocation {
   using Array = std::array<float, ChassisMotorPowerModel::kMotorCount>;
 
-  Array estimated_power_w{0.0f, 0.0f, 0.0f, 0.0f};
-  Array positive_power_w{0.0f, 0.0f, 0.0f, 0.0f};
-  Array allocated_power_w{0.0f, 0.0f, 0.0f, 0.0f};
-  Array allocated_current_cmd_raw{0.0f, 0.0f, 0.0f, 0.0f};
+  Array estimated_power_w{};
+  Array positive_power_w{};
+  Array allocated_power_w{};
+  Array allocated_tau_ref_nm{};     // 功率限制后的力矩指令 (Nm)
+  Array speed_error_radps{};        // 各轮速度误差
   float total_positive_power_w = 0.0f;
   float active_power_limit_w = 0.0f;
   bool power_limited = false;
 };
 
-inline float SanitizeFinite(float value, float fallback = 0.0f) {
-  return std::isfinite(value) ? value : fallback;
+// ==========================================================================
+// 功率预测：基于当前 PID 输出和转速预测总功率
+// ==========================================================================
+inline float PredictMotorPowerW(float pid_tau_nm, float cur_omega_radps,
+                                float k1, float k2, float k3) {
+  return pid_tau_nm * cur_omega_radps + k1 * std::fabs(cur_omega_radps) +
+         k2 * pid_tau_nm * pid_tau_nm + k3 / static_cast<float>(ChassisMotorPowerModel::kMotorCount);
 }
 
-inline float EstimateMotorPowerW(std::size_t motor_index,
-                                 float current_cmd_raw, float speed_rpm) {
-  const std::size_t index =
-      std::min(motor_index, ChassisMotorPowerModel::kMotorCount - 1U);
-  current_cmd_raw = SanitizeFinite(current_cmd_raw);
-  speed_rpm = SanitizeFinite(speed_rpm);
+// ==========================================================================
+// 二次方程求解最大力矩
+// 给定分配的功率 P_alloc，求解 k2*tau² + omega*tau + (k1*|omega| + k3/n - P_alloc) = 0
+// 返回使 tau 符号与原始输出一致的实根
+// ==========================================================================
+inline float SolveMaxTorqueForPower(float allocated_power_w, float cur_omega_radps,
+                                    float original_tau_nm, float k1, float k2,
+                                    float k3) {
+  const float c = k1 * std::fabs(cur_omega_radps) +
+                  k3 / static_cast<float>(ChassisMotorPowerModel::kMotorCount) -
+                  allocated_power_w;
+  const float delta = cur_omega_radps * cur_omega_radps - 4.0f * k2 * c;
 
-  return ChassisMotorPowerModel::kK1[index] * current_cmd_raw *
-             current_cmd_raw +
-         ChassisMotorPowerModel::kK2[index] * speed_rpm * speed_rpm +
-         ChassisMotorPowerModel::kPowerCoef * speed_rpm * current_cmd_raw *
-             ChassisMotorPowerModel::kTorqueCoef +
-         ChassisMotorPowerModel::kConstant[index];
-}
-
-inline float SolveCurrentCommandForPower(std::size_t motor_index,
-                                         float speed_rpm,
-                                         float allocated_power_w,
-                                         float original_current_cmd_raw) {
-  const std::size_t index =
-      std::min(motor_index, ChassisMotorPowerModel::kMotorCount - 1U);
-  speed_rpm = SanitizeFinite(speed_rpm);
-  allocated_power_w = std::max(0.0f, SanitizeFinite(allocated_power_w));
-  original_current_cmd_raw = SanitizeFinite(original_current_cmd_raw);
-
-  const float a = ChassisMotorPowerModel::kK1[index];
-  const float b = ChassisMotorPowerModel::kTorqueCoef *
-                  ChassisMotorPowerModel::kPowerCoef * speed_rpm;
-  const float c = ChassisMotorPowerModel::kK2[index] * speed_rpm * speed_rpm -
-                  allocated_power_w + ChassisMotorPowerModel::kConstant[index];
-  if (a <= 0.0f) {
-    return original_current_cmd_raw;
+  if (delta < 0.0f) {
+    // 虚根 → 使用近似解
+    return -cur_omega_radps / (2.0f * k2);
   }
-
-  float discriminant = b * b - 4.0f * a * c;
-  if (!std::isfinite(discriminant) || discriminant < 0.0f) {
-    discriminant = 0.0f;
+  if (std::fabs(delta) < 1e-6f) {
+    // 重根
+    return -cur_omega_radps / (2.0f * k2);
   }
-
-  const float sqrt_discriminant = std::sqrt(discriminant);
-  const float numerator = original_current_cmd_raw >= 0.0f
-                              ? (-b + sqrt_discriminant)
-                              : (-b - sqrt_discriminant);
-  const float solved = numerator / (2.0f * a);
-  return SanitizeFinite(solved, original_current_cmd_raw);
-}
-
-inline ChassisPowerAllocation AllocateChassisMotorPower(
-    const ChassisPowerAllocation::Array& current_cmd_raw,
-    const ChassisPowerAllocation::Array& speed_rpm, float power_limit_w) {
-  ChassisPowerAllocation allocation{};
-  allocation.active_power_limit_w = std::max(0.0f, SanitizeFinite(power_limit_w));
-
-  for (std::size_t index = 0; index < ChassisMotorPowerModel::kMotorCount;
-       ++index) {
-    allocation.estimated_power_w[index] =
-        EstimateMotorPowerW(index, current_cmd_raw[index], speed_rpm[index]);
-    const float positive_power =
-        std::max(0.0f, SanitizeFinite(allocation.estimated_power_w[index]));
-    allocation.positive_power_w[index] = positive_power;
-    allocation.allocated_power_w[index] = positive_power;
-    allocation.allocated_current_cmd_raw[index] =
-        SanitizeFinite(current_cmd_raw[index]);
-    allocation.total_positive_power_w += positive_power;
-  }
-
-  if (allocation.active_power_limit_w <= 0.0f ||
-      allocation.total_positive_power_w <= allocation.active_power_limit_w) {
-    return allocation;
-  }
-
-  allocation.power_limited = true;
-  const float ratio =
-      allocation.active_power_limit_w / allocation.total_positive_power_w;
-  for (std::size_t index = 0; index < ChassisMotorPowerModel::kMotorCount;
-       ++index) {
-    allocation.allocated_power_w[index] =
-        allocation.positive_power_w[index] * ratio;
-    allocation.allocated_current_cmd_raw[index] = SolveCurrentCommandForPower(
-        index, speed_rpm[index], allocation.allocated_power_w[index],
-        current_cmd_raw[index]);
-  }
-
-  return allocation;
+  // 相异实根 → 选择与原始输出符号相同的根
+  const float sqrt_delta = std::sqrt(delta);
+  return original_tau_nm >= 0.0f ? (-cur_omega_radps + sqrt_delta) / (2.0f * k2)
+                                 : (-cur_omega_radps - sqrt_delta) / (2.0f * k2);
 }
 
 }  // namespace App

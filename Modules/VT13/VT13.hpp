@@ -25,6 +25,8 @@ depends: []
 #include "uart.hpp"
 #include "utils/crc.hpp"
 
+using LibXR::ErrorCode;
+
 enum class VT13Mode : uint8_t {
   kC = 0,
   kN = 1,

@@ -24,6 +24,8 @@ depends: []
 #include "utils/crc.hpp"
 #include "uart.hpp"
 
+using LibXR::ErrorCode;
+
 enum class MasterMachineFireMode : std::uint8_t {
   kNoFire = 0,
   kAutoFire = 1,

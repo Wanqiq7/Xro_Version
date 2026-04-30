@@ -1,11 +1,10 @@
 #pragma once
 
-#include <algorithm>
 #include <array>
-#include <cmath>
 #include <cstddef>
 
 #include "ChassisMotorPowerModel.hpp"
+#include "ChassisPowerController.hpp"
 #include "../Cmd/RefereeConstraintView.hpp"
 #include "../Config/ChassisConfig.hpp"
 #include "../Topics/MotionCommand.hpp"
@@ -13,6 +12,16 @@
 
 namespace App {
 
+/// @brief 底盘功率限制器 —— ChassisPowerController 的薄适配层
+///
+/// 职责：将外部输入（裁判约束、超级电容状态、PID 力矩、轮速）转换为
+/// ChassisPowerController 的内部格式，调用其 Update()，再将输出映射回
+/// 功率限制后的力矩与 diagnostic 字段。
+///
+/// 与旧版的核心差异：
+/// - 不再对 target_wheel_speed_radps / MotionCommand 速度做缩放
+/// - 不再使用离散档位 scale（high/medium/low）
+/// - 功率限制通过钳位 wheel_tau_ref_nm 直接实现
 class ChassisPowerLimiter {
  public:
   using WheelSpeedArray = std::array<float, 4>;
@@ -21,211 +30,108 @@ class ChassisPowerLimiter {
     const MotionCommand& command;
     const RefereeConstraintView& referee;
     const SuperCapState& super_cap;
-    const WheelSpeedArray& current_wheel_speed_radps;
-    const WheelSpeedArray& target_wheel_speed_radps;
-    const WheelSpeedArray& wheel_tau_ref_nm;
-    const WheelSpeedArray& current_cmd_raw;
-    const WheelSpeedArray& motor_speed_rpm;
+    const WheelSpeedArray& current_wheel_speed_radps;   // 当前轮速 (rad/s)
+    const WheelSpeedArray& target_wheel_speed_radps;    // 目标轮速 (rad/s)
+    const WheelSpeedArray& wheel_tau_ref_nm;            // PID 力矩输出 (Nm)
+    const WheelSpeedArray& current_cmd_raw;             // 当前电流命令（不再用于功率限制）
+    const WheelSpeedArray& motor_speed_rpm;             // 电机转速 RPM（不再用于功率限制）
   };
 
   struct Output {
     MotionCommand command{};
-    WheelSpeedArray target_wheel_speed_radps{0.0f, 0.0f, 0.0f, 0.0f};
-    WheelSpeedArray limited_wheel_tau_ref_nm{0.0f, 0.0f, 0.0f, 0.0f};
+    WheelSpeedArray target_wheel_speed_radps{};
+    WheelSpeedArray limited_wheel_tau_ref_nm{};   // 功率限制后的力矩
     ChassisPowerAllocation motor_power_allocation{};
     float motion_scale = 1.0f;
     float active_power_limit_w = 0.0f;
     bool power_limited = false;
     bool motor_power_limited = false;
+    // 能量环和 RLS 状态暴露
+    float base_max_power_w = 0.0f;
+    float full_max_power_w = 0.0f;
+    float estimated_cap_energy_raw = 0.0f;
+    float k1 = 0.22f;
+    float k2 = 1.2f;
+    uint8_t error_flags = 0;
   };
 
-  explicit constexpr ChassisPowerLimiter(
+  explicit ChassisPowerLimiter(
       Config::ChassisPowerLimiterConfig config =
           Config::kChassisPowerLimiterConfig)
       : config_(config) {}
 
-  Output Apply(const Input& input) {
+  /// @brief 功率限制主入口
+  /// @param input 外部输入（裁判约束、超级电容状态、PID 力矩、轮速）
+  /// @param dt_s 距上次调用时间 (s)，供能量环积分和 RLS 遗忘
+  /// @return 功率限制后的力矩与 diagnostic 信息
+  Output Apply(const Input& input, float dt_s) {
     Output output{};
+
+    // ── 1. 构建能量输入 ──
+    ChassisPowerController::EnergyInput energy_input{};
+    energy_input.referee_online = input.referee.referee_online;
+    energy_input.chassis_power_limit_w = input.referee.chassis_power_limit_w;
+    energy_input.chassis_power_w = input.referee.chassis_power_w;
+    energy_input.buffer_energy =
+        static_cast<float>(input.referee.buffer_energy);
+    energy_input.robot_level = input.referee.robot_level;
+
+    energy_input.cap_online =
+        input.super_cap.online &&
+        !SuperCapProtocol::IsOutputDisabled(input.super_cap.error_code);
+    energy_input.cap_output_enabled =
+        !SuperCapProtocol::IsOutputDisabled(input.super_cap.error_code);
+    energy_input.cap_energy_raw =
+        input.super_cap.cap_energy_percent * 2.55f;  // 0-100% → 0-255 原始值
+    energy_input.cap_chassis_power_w =
+        input.super_cap.chassis_power_w;
+    energy_input.cap_power_limit_w =
+        input.super_cap.chassis_power_limit_w;
+
+    // ── 2. 构建四轮对象 ──
+    std::array<ChassisPowerController::WheelObj, ChassisPowerController::kMotorCount> wheels;
+    for (std::size_t i = 0; i < wheels.size(); ++i) {
+      wheels[i].pid_tau_nm = input.wheel_tau_ref_nm[i];
+      wheels[i].cur_omega_radps = input.current_wheel_speed_radps[i];
+      wheels[i].set_omega_radps = input.target_wheel_speed_radps[i];
+      // 最大力矩限制来自力控配置
+      wheels[i].max_tau_nm = Config::kChassisForceControlConfig.max_wheel_tau_ref_nm;
+      // 电机在线判定：超级电容正常且该轮有速度反馈
+      // 默认在线，降级时可通过 super_cap state 判断
+      wheels[i].online = true;
+    }
+
+    // ── 3. 调用功率控制器 ──
+    const auto pwr_output = power_controller_.Update(energy_input, wheels, dt_s);
+
+    // ── 4. 填充输出 ──
+    output.limited_wheel_tau_ref_nm = pwr_output.limited_tau_nm;
+    output.motor_power_allocation = pwr_output.power_allocation;
+    output.active_power_limit_w = pwr_output.active_power_limit_w;
+    output.power_limited = pwr_output.power_limited;
+    output.motor_power_limited = pwr_output.power_limited;
+    output.base_max_power_w = pwr_output.base_max_power_w;
+    output.full_max_power_w = pwr_output.full_max_power_w;
+    output.estimated_cap_energy_raw = pwr_output.estimated_cap_energy_raw;
+    output.k1 = pwr_output.k1;
+    output.k2 = pwr_output.k2;
+    output.error_flags = pwr_output.error_flags;
+
+    // 不再缩放速度：直接拷贝原始 command 和 target
     output.command = input.command;
     output.target_wheel_speed_radps = input.target_wheel_speed_radps;
-    output.limited_wheel_tau_ref_nm = input.wheel_tau_ref_nm;
+    output.motion_scale = 1.0f;
 
-    const float desired_scale = ResolveDesiredScale(input);
-    const float scale = UpdateFilteredScale(desired_scale);
-
-    output.motion_scale = scale;
-    output.active_power_limit_w = ResolveActivePowerLimit(input);
-    // allocated_current_cmd_raw 仅作为 donor 功率分配诊断暴露，当前不接管 DJIMotor 发帧。
-    output.motor_power_allocation = AllocateChassisMotorPower(
-        input.current_cmd_raw, input.motor_speed_rpm,
-        output.active_power_limit_w);
-    output.motor_power_limited = output.motor_power_allocation.power_limited;
-    output.power_limited =
-        input.referee.power_limited || scale < config_.full_scale_epsilon ||
-        output.motor_power_limited;
-
-    ScaleCommand(output.command, scale);
-    ScaleWheelTargets(output.target_wheel_speed_radps, scale);
-    ScaleWheelTorques(output.limited_wheel_tau_ref_nm, scale);
-
+    // 在 MotionCommand 上设置功率限制标志
     output.command.power_limited = output.power_limited;
     output.command.chassis_power_limit_w = output.active_power_limit_w;
+
     return output;
   }
 
  private:
-  static constexpr float Clamp01(float value) {
-    if (value <= 0.0f) return 0.0f;
-    if (value >= 1.0f) return 1.0f;
-    return value;
-  }
-
-  static constexpr float ScaleByPowerLimit(
-      float chassis_power_limit_w,
-      const Config::ChassisPowerLimiterConfig& config) {
-    if (chassis_power_limit_w >= config.full_power_limit_w) {
-      return 1.0f;
-    }
-    if (chassis_power_limit_w >= config.high_power_limit_w) {
-      return config.high_power_scale;
-    }
-    if (chassis_power_limit_w >= config.medium_power_limit_w) {
-      return config.medium_power_scale;
-    }
-    if (chassis_power_limit_w > 0.0f) {
-      return config.low_power_scale;
-    }
-    return config.stop_scale;
-  }
-
-  static constexpr float ScaleByCapEnergy(
-      float cap_energy_percent,
-      const Config::ChassisPowerLimiterConfig& config) {
-    if (cap_energy_percent >= config.full_energy_percent) {
-      return 1.0f;
-    }
-    if (cap_energy_percent >= config.high_energy_percent) {
-      return config.high_energy_scale;
-    }
-    if (cap_energy_percent >= config.medium_energy_percent) {
-      return config.medium_energy_scale;
-    }
-    if (cap_energy_percent >= config.low_energy_percent) {
-      return config.low_energy_scale;
-    }
-    if (cap_energy_percent > 0.0f) {
-      return config.critical_energy_scale;
-    }
-    return config.stop_scale;
-  }
-
-  static bool IsUsableSuperCap(const SuperCapState& super_cap) {
-    return super_cap.online &&
-           !SuperCapProtocol::IsOutputDisabled(super_cap.error_code);
-  }
-
-  float ResolveDesiredScale(const Input& input) const {
-    float scale = Clamp01(input.referee.motion_scale);
-
-    if (IsUsableSuperCap(input.super_cap)) {
-      scale = std::min(scale, ScaleByCapEnergy(
-                                  input.super_cap.cap_energy_percent, config_));
-
-      if (input.super_cap.chassis_power_limit_w > 0U) {
-        scale = std::min(
-            scale, ScaleByPowerLimit(
-                       static_cast<float>(
-                           input.super_cap.chassis_power_limit_w),
-                       config_));
-      }
-
-      const float active_power_limit_w = ResolveActivePowerLimit(input);
-      if (active_power_limit_w > 0.0f &&
-          input.super_cap.chassis_power_w >
-              active_power_limit_w + config_.power_overshoot_margin_w) {
-        scale = std::min(scale, config_.overshoot_scale);
-      }
-
-      if (input.referee.buffer_energy_valid &&
-          input.referee.buffer_energy < config_.low_buffer_energy_j) {
-        scale = std::min(scale, config_.low_buffer_energy_scale);
-      }
-    }
-
-    const float requested_delta = MaxAbsWheelDelta(
-        input.current_wheel_speed_radps, input.target_wheel_speed_radps);
-    if (requested_delta > config_.large_wheel_delta_radps) {
-      scale = std::min(scale, config_.large_delta_scale);
-    }
-
-    return Clamp01(scale);
-  }
-
-  float ResolveActivePowerLimit(const Input& input) const {
-    float limit_w = input.referee.referee_online
-                        ? input.referee.chassis_power_limit_w
-                        : 0.0f;
-
-    if (IsUsableSuperCap(input.super_cap) &&
-        input.super_cap.chassis_power_limit_w > 0U) {
-      const float cap_limit_w =
-          static_cast<float>(input.super_cap.chassis_power_limit_w);
-      limit_w = limit_w > 0.0f ? std::min(limit_w, cap_limit_w) : cap_limit_w;
-    }
-
-    return limit_w;
-  }
-
-  float UpdateFilteredScale(float desired_scale) {
-    desired_scale = Clamp01(desired_scale);
-    if (desired_scale < filtered_scale_) {
-      filtered_scale_ = desired_scale;
-    } else {
-      filtered_scale_ = std::min(
-          desired_scale, filtered_scale_ + config_.recovery_step_per_monitor);
-    }
-    return filtered_scale_;
-  }
-
-  static float MaxAbsWheelDelta(const WheelSpeedArray& current,
-                                const WheelSpeedArray& target) {
-    float max_delta = 0.0f;
-    for (std::size_t index = 0; index < current.size(); ++index) {
-      max_delta = std::max(max_delta, std::fabs(target[index] - current[index]));
-    }
-    return max_delta;
-  }
-
-  static void ScaleCommand(MotionCommand& command, float scale) {
-    if (scale <= 0.0f) {
-      command.motion_mode = MotionModeType::kStop;
-      command.vx_mps = 0.0f;
-      command.vy_mps = 0.0f;
-      command.wz_radps = 0.0f;
-      return;
-    }
-
-    command.vx_mps *= scale;
-    command.vy_mps *= scale;
-    command.wz_radps *= scale;
-  }
-
-  static void ScaleWheelTargets(WheelSpeedArray& target_wheel_speed_radps,
-                                float scale) {
-    for (auto& wheel_speed : target_wheel_speed_radps) {
-      wheel_speed *= scale;
-    }
-  }
-
-  static void ScaleWheelTorques(WheelSpeedArray& wheel_tau_ref_nm,
-                                float scale) {
-    for (auto& tau : wheel_tau_ref_nm) {
-      tau *= scale;
-    }
-  }
-
   Config::ChassisPowerLimiterConfig config_{};
-  float filtered_scale_ = 1.0f;
+  ChassisPowerController power_controller_{};
 };
 
 }  // namespace App

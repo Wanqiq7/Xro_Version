@@ -60,6 +60,7 @@ class ChassisController : public ControllerBase {
   WheelMotorArray wheel_motors_;
   LibXR::MicrosecondTimestamp last_estimate_update_us_ = 0;
   LibXR::MicrosecondTimestamp last_force_update_us_ = 0;
+  LibXR::MicrosecondTimestamp last_power_update_us_ = 0;
   VelocityEstimateState estimate_state_{};
   bool output_enabled_ = false;
   Config::MecanumChassisConfig actuator_config_ = Config::kMecanumChassisConfig;

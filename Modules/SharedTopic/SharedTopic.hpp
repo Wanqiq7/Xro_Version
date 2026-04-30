@@ -29,6 +29,8 @@ depends: []
 #include "thread.hpp"
 #include "uart.hpp"
 
+using LibXR::ErrorCode;
+
 class SharedTopic : public LibXR::Application {
  public:
   struct TopicConfig {
@@ -93,9 +95,8 @@ class SharedTopic : public LibXR::Application {
 
   static int CommandFunc(SharedTopic* self, int argc, char** argv) {
     if (argc == 1) {
-      LibXR::STDIO::Printf("Usage:\r\n");
-      LibXR::STDIO::Printf(
-          "  monitor [time_ms] [interval_ms] - test received speed\r\n");
+      LibXR::STDIO::Printf<"Usage:\r\n">();
+      LibXR::STDIO::Printf<"  monitor [time_ms] [interval_ms] - test received speed\r\n">();
       return 0;
     } else if (argc == 4) {
       if (strcmp(argv[1], "monitor") == 0) {
@@ -104,15 +105,15 @@ class SharedTopic : public LibXR::Application {
         auto start = self->rx_count_;
         while (time > 0) {
           LibXR::Thread::Sleep(delay);
-          LibXR::STDIO::Printf(
-              "%f Mbps\r\n", static_cast<float>(self->rx_count_ - start) * 8.0 /
-                                 1024.0 / 1024.0 / delay * 1000.0);
+          LibXR::STDIO::Printf<"%f Mbps\r\n">(
+              static_cast<float>(self->rx_count_ - start) * 8.0 /
+              1024.0 / 1024.0 / delay * 1000.0);
           time -= delay;
           start = self->rx_count_;
         }
       }
     } else {
-      LibXR::STDIO::Printf("Error: Invalid arguments.\r\n");
+      LibXR::STDIO::Printf<"Error: Invalid arguments.\r\n">();
       return -1;
     }
 

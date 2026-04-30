@@ -19,6 +19,8 @@ depends: []
 #include "app_framework.hpp"
 #include "uart.hpp"
 
+using LibXR::ErrorCode;
+
 class SharedTopicClient : public LibXR::Application {
  public:
   typedef struct {
