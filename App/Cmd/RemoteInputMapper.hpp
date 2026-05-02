@@ -149,6 +149,7 @@ inline void ApplySafeDefaults(OperatorInputSnapshot& snapshot) {
   snapshot.power_boost_requested = false;
   snapshot.fire_enabled = false;
   snapshot.friction_enabled = false;
+  snapshot.ignore_referee_fire_gate = false;
   snapshot.trigger_pressed = false;
   snapshot.shot_request_seq = 0;
   snapshot.target_bullet_speed_mps = 0.0f;
@@ -159,8 +160,8 @@ inline void ApplySafeDefaults(OperatorInputSnapshot& snapshot) {
   snapshot.target_wz_radps = 0.0f;
   snapshot.target_yaw_deg = 0.0f;
   snapshot.target_pitch_deg = 0.0f;
-  snapshot.yaw_delta_deg = 0.0f;
-  snapshot.pitch_delta_deg = 0.0f;
+  snapshot.yaw_rate_degps = 0.0f;
+  snapshot.pitch_rate_degps = 0.0f;
   snapshot.track_target = false;
   snapshot.manual_keys = {};
   snapshot.manual_mouse = {};
@@ -285,7 +286,6 @@ inline void ApplyKeyboardMotion(bool w, bool s, bool a, bool d,
 inline void ApplyDT7Input(const DT7InputState& state, InputLatchState& latch,
                           OperatorInputSnapshot& snapshot) {
   ApplySafeDefaults(snapshot);
-  ApplyLatchedState(latch, snapshot);
 
   if (!state.online) {
     ResetInputLatch(latch);
@@ -296,90 +296,50 @@ inline void ApplyDT7Input(const DT7InputState& state, InputLatchState& latch,
   }
 
   snapshot.has_active_source = true;
-  snapshot.request_manual_mode = true;
-  snapshot.control_source =
-      state.left_switch == RemoteSwitchPosition::kUp
-          ? ControlSource::kKeyboardMouse
-          : ControlSource::kRemote;
-
-  if (state.right_switch == RemoteSwitchPosition::kUp) {
-    latch.emergency_latched = false;
-    snapshot.requested_motion_mode = MotionModeType::kIndependent;
-  } else if (state.right_switch == RemoteSwitchPosition::kMiddle) {
-    snapshot.requested_motion_mode = MotionModeType::kIndependent;
-  } else if (state.right_switch == RemoteSwitchPosition::kDown) {
-    snapshot.requested_motion_mode = MotionModeType::kFollowGimbal;
-  }
+  snapshot.control_source = ControlSource::kRemote;
 
   if (state.dial > InputConfig::kDialEmergencyThreshold) {
     latch.emergency_latched = true;
+    snapshot.emergency_latched = true;
+    snapshot.request_safe_mode = true;
+    return;
   }
 
-  const bool z_pressed = IsKeyDown(state.keyboard_key_code, kDt7KeyZ);
-  const bool e_pressed = IsKeyDown(state.keyboard_key_code, kDt7KeyE);
-  const bool r_pressed = IsKeyDown(state.keyboard_key_code, kDt7KeyR);
-  const bool f_pressed = IsKeyDown(state.keyboard_key_code, kDt7KeyF);
-  const bool c_pressed = IsKeyDown(state.keyboard_key_code, kDt7KeyC);
-  UpdateCommonToggleEdges(z_pressed, e_pressed, r_pressed, f_pressed, c_pressed,
-                          latch, snapshot);
-  ApplyLatchedState(latch, snapshot);
-
-  if (state.dial < InputConfig::kDialFrictionThreshold) {
-    snapshot.friction_enabled = true;
-  }
-  if (state.dial < InputConfig::kDialContinuousFireThreshold) {
-    snapshot.requested_loader_mode = LoaderModeType::kContinuous;
-  }
-
-  snapshot.request_safe_mode = latch.emergency_latched;
-  snapshot.requested_aim_mode =
-      state.left_switch == RemoteSwitchPosition::kUp ? AimModeType::kManual
-                                                     : AimModeType::kHold;
-  snapshot.manual_keys.w = IsKeyDown(state.keyboard_key_code, kDt7KeyW);
-  snapshot.manual_keys.s = IsKeyDown(state.keyboard_key_code, kDt7KeyS);
-  snapshot.manual_keys.a = IsKeyDown(state.keyboard_key_code, kDt7KeyA);
-  snapshot.manual_keys.d = IsKeyDown(state.keyboard_key_code, kDt7KeyD);
-  snapshot.manual_keys.shift = IsKeyDown(state.keyboard_key_code, kDt7KeyShift);
-  snapshot.manual_keys.z = z_pressed;
-  snapshot.manual_keys.e = e_pressed;
-  snapshot.manual_keys.r = r_pressed;
-  snapshot.manual_keys.f = f_pressed;
-  snapshot.manual_keys.c = c_pressed;
-  snapshot.manual_mouse.left_button = state.mouse_left_button;
-  snapshot.manual_mouse.right_button = state.mouse_right_button;
-  snapshot.manual_mouse.x_delta = state.mouse_x_delta;
-  snapshot.manual_mouse.y_delta = state.mouse_y_delta;
-
-  snapshot.power_boost_requested = snapshot.manual_keys.shift;
-  snapshot.manual_toggles.power_boost_pressed = snapshot.manual_keys.shift;
+  latch.emergency_latched = false;
+  snapshot.emergency_latched = false;
+  snapshot.request_safe_mode = false;
+  snapshot.request_manual_mode = true;
+  snapshot.requested_aim_mode = AimModeType::kManual;
+  snapshot.chassis_speed_scale = 1.0f;
+  snapshot.target_bullet_speed_mps = InputConfig::kDefaultBulletSpeedMps;
 
   if (state.left_switch == RemoteSwitchPosition::kUp) {
-    ApplyKeyboardMotion(snapshot.manual_keys.w, snapshot.manual_keys.s,
-                        snapshot.manual_keys.a, snapshot.manual_keys.d,
-                        snapshot);
-    snapshot.yaw_delta_deg =
-        ClampUnit(state.mouse_x_delta) * InputConfig::kMaxYawDeltaDeg;
-    snapshot.pitch_delta_deg =
-        ClampUnit(state.mouse_y_delta) * InputConfig::kMaxPitchDeltaDeg;
-  } else {
-    snapshot.target_vx_mps =
-        ClampUnit(state.left_y) * InputConfig::kMaxChassisLinearSpeedMps;
-    snapshot.target_vy_mps =
-        ClampUnit(state.left_x) * InputConfig::kMaxChassisLinearSpeedMps;
-    snapshot.yaw_delta_deg = ClampUnit(state.right_x) * InputConfig::kMaxYawDeltaDeg;
-    snapshot.pitch_delta_deg =
-        -ClampUnit(state.right_y) * InputConfig::kMaxPitchDeltaDeg;
+    snapshot.requested_motion_mode = MotionModeType::kSpin;
+  } else if (state.left_switch == RemoteSwitchPosition::kMiddle) {
+    snapshot.requested_motion_mode = MotionModeType::kFollowGimbal;
+  } else if (state.left_switch == RemoteSwitchPosition::kDown) {
+    snapshot.requested_motion_mode = MotionModeType::kIndependent;
   }
 
-  snapshot.trigger_pressed = state.mouse_left_button;
-  UpdateFireTriggerEdge(state.mouse_left_button, latch, snapshot);
-  snapshot.fire_enabled =
-      snapshot.friction_enabled &&
-      (state.mouse_left_button ||
-       snapshot.requested_loader_mode == LoaderModeType::kContinuous);
-  snapshot.target_shoot_rate_hz =
-      snapshot.fire_enabled ? InputConfig::kDefaultShootRateHz : 0.0f;
-  snapshot.shoot_rate_scale = snapshot.fire_enabled ? 1.0f : 0.0f;
+  if (state.right_switch == RemoteSwitchPosition::kUp) {
+    snapshot.friction_enabled = true;
+    snapshot.fire_enabled = true;
+    snapshot.requested_loader_mode = LoaderModeType::kContinuous;
+    snapshot.ignore_referee_fire_gate = true;
+    snapshot.target_shoot_rate_hz = InputConfig::kDefaultShootRateHz;
+    snapshot.shoot_rate_scale = 1.0f;
+  } else if (state.right_switch == RemoteSwitchPosition::kMiddle) {
+    snapshot.friction_enabled = true;
+  }
+
+  snapshot.target_vx_mps =
+      ClampUnit(state.left_y) * InputConfig::kMaxChassisLinearSpeedMps;
+  snapshot.target_vy_mps =
+      ClampUnit(state.left_x) * InputConfig::kMaxChassisLinearSpeedMps;
+  snapshot.yaw_rate_degps =
+      ClampUnit(state.right_x) * InputConfig::kMaxYawRateDegps;
+  snapshot.pitch_rate_degps =
+      -ClampUnit(state.right_y) * InputConfig::kMaxPitchRateDegps;
 }
 
 inline void ApplyVT13Input(const VT13InputState& state, InputLatchState& latch,
@@ -441,9 +401,10 @@ inline void ApplyVT13Input(const VT13InputState& state, InputLatchState& latch,
       snapshot.target_vy_mps =
           ClampUnit(state.x) * InputConfig::kMaxChassisLinearSpeedMps;
     }
-    snapshot.yaw_delta_deg = ClampUnit(state.yaw) * InputConfig::kMaxYawDeltaDeg;
-    snapshot.pitch_delta_deg =
-        ClampUnit(state.pitch) * InputConfig::kMaxPitchDeltaDeg;
+    snapshot.yaw_rate_degps =
+        ClampUnit(state.yaw) * InputConfig::kMaxYawRateDegps;
+    snapshot.pitch_rate_degps =
+        ClampUnit(state.pitch) * InputConfig::kMaxPitchRateDegps;
     snapshot.target_wz_radps = ClampUnit(state.wheel);
     snapshot.requested_motion_mode = MotionModeType::kIndependent;
     snapshot.requested_aim_mode = AimModeType::kManual;

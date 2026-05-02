@@ -6,11 +6,15 @@
 #include "../../Modules/DMMotor/DMMotor.hpp"
 #include "GimbalMath.hpp"
 
+#include <cmath>
+
 namespace App {
 
 namespace {
 
 constexpr float kDegToRad = GimbalMath::kDegToRad;
+constexpr float kDefaultManualControlDtS = 0.001f;
+constexpr float kMaxManualControlDtS = 0.05f;
 
 float ClampPitchCommandDeg(float pitch_deg) {
   if (pitch_deg < Config::kPitchCommandMinDeg) {
@@ -77,11 +81,69 @@ void GimbalController::SyncPitchMotorStateSummary() {
   pitch_state_.safe_stopped = motor_state.safe_stopped;
 }
 
-void GimbalController::ApplyYawMotorControl(bool robot_ready) {
+float GimbalController::ComputeManualControlDeltaTimeSeconds() {
+  const auto now_us = LibXR::Timebase::GetMicroseconds();
+  if (last_manual_control_time_us_ == 0) {
+    last_manual_control_time_us_ = now_us;
+    return kDefaultManualControlDtS;
+  }
+
+  const auto delta = now_us - last_manual_control_time_us_;
+  last_manual_control_time_us_ = now_us;
+
+  const float dt_s = delta.ToSecondf();
+  if (!std::isfinite(dt_s) || dt_s <= 0.0f || dt_s > kMaxManualControlDtS) {
+    return kDefaultManualControlDtS;
+  }
+  return dt_s;
+}
+
+float GimbalController::ResolveYawCommandDeg(bool robot_ready,
+                                             bool feedback_ready, float dt_s) {
+  const bool manual_enabled = robot_ready && feedback_ready &&
+                              aim_command_.aim_mode == AimModeType::kManual;
+  if (!manual_enabled) {
+    manual_yaw_target_initialized_ = false;
+    return aim_command_.yaw_deg;
+  }
+
+  if (!manual_yaw_target_initialized_) {
+    // 手动模式恢复时从当前姿态续接，避免默认零目标造成瞬时拉扯。
+    manual_yaw_target_deg_ = ins_state_.yaw_total_deg;
+    manual_yaw_target_initialized_ = true;
+  }
+
+  manual_yaw_target_deg_ += aim_command_.yaw_rate_degps * dt_s;
+  return manual_yaw_target_deg_;
+}
+
+float GimbalController::ResolvePitchCommandDeg(bool robot_ready,
+                                               bool feedback_ready,
+                                               float dt_s) {
+  const bool manual_enabled = robot_ready && feedback_ready &&
+                              aim_command_.aim_mode == AimModeType::kManual;
+  if (!manual_enabled) {
+    manual_pitch_target_initialized_ = false;
+    return ClampPitchCommandDeg(aim_command_.pitch_deg);
+  }
+
+  if (!manual_pitch_target_initialized_) {
+    // pitch 同样以 INS 当前姿态为积分起点，并始终保留机械保护限位。
+    manual_pitch_target_deg_ = ClampPitchCommandDeg(ins_state_.pitch_deg);
+    manual_pitch_target_initialized_ = true;
+  }
+
+  manual_pitch_target_deg_ = ClampPitchCommandDeg(
+      manual_pitch_target_deg_ + aim_command_.pitch_rate_degps * dt_s);
+  return manual_pitch_target_deg_;
+}
+
+void GimbalController::ApplyYawMotorControl(bool robot_ready, float dt_s) {
   const bool feedback_ready = ins_state_.online && ins_state_.gyro_online;
   const bool output_enabled = robot_ready && feedback_ready;
-  yaw_state_.commanded_position = aim_command_.yaw_deg;
-  yaw_state_.measured_position = ins_state_.yaw_deg;
+  yaw_state_.commanded_position =
+      ResolveYawCommandDeg(robot_ready, feedback_ready, dt_s);
+  yaw_state_.measured_position = ins_state_.yaw_total_deg;
   yaw_state_.measured_rate = ins_state_.yaw_rate_degps;
 
   // yaw 使用统一 INS 外反馈注入；反馈未在线时禁止把默认零值送入闭环。
@@ -109,12 +171,13 @@ void GimbalController::ApplyYawMotorControl(bool robot_ready) {
                           : AxisStatus::kWaitingFeedback;
 }
 
-void GimbalController::ApplyPitchMotorControl(bool robot_ready) {
-  const float clamped_pitch_deg = ClampPitchCommandDeg(aim_command_.pitch_deg);
+void GimbalController::ApplyPitchMotorControl(bool robot_ready, float dt_s) {
   const bool feedback_ready =
       ins_state_.online && ins_state_.gyro_online && ins_state_.accl_online;
   const bool output_enabled = robot_ready && feedback_ready;
-  pitch_state_.commanded_position = clamped_pitch_deg;
+  const float command_pitch_deg =
+      ResolvePitchCommandDeg(robot_ready, feedback_ready, dt_s);
+  pitch_state_.commanded_position = command_pitch_deg;
   pitch_state_.measured_position = ins_state_.pitch_deg;
   pitch_state_.measured_rate = ins_state_.pitch_rate_degps;
 
@@ -135,7 +198,7 @@ void GimbalController::ApplyPitchMotorControl(bool robot_ready) {
                           DMMotorFeedbackSource::kExternal);
   pitch_motor_.ChangeFeed(DMMotorOuterLoop::kSpeed,
                           DMMotorFeedbackSource::kExternal);
-  pitch_motor_.SetReference(clamped_pitch_deg * kDegToRad);
+  pitch_motor_.SetReference(command_pitch_deg * kDegToRad);
 
   SyncPitchMotorStateSummary();
   pitch_state_.status = pitch_state_.feedback_online
@@ -182,8 +245,9 @@ void GimbalController::OnMonitor() {
   PullTopicData();
 
   const bool robot_ready = IsRobotReady();
-  ApplyYawMotorControl(robot_ready);
-  ApplyPitchMotorControl(robot_ready);
+  const float dt_s = ComputeManualControlDeltaTimeSeconds();
+  ApplyYawMotorControl(robot_ready, dt_s);
+  ApplyPitchMotorControl(robot_ready, dt_s);
   UpdateGimbalState(robot_ready);
 
   gimbal_state_topic_.Publish(gimbal_state_);

@@ -78,6 +78,9 @@ void ExpectStaticGyroBiasConvergesOnlyOnObservableAxes() {
   assert(Near(state.gyro_bias_radps.x, gyro_bias_radps.x, 0.015f));
   assert(Near(state.gyro_bias_radps.y, gyro_bias_radps.y, 0.015f));
   assert(Near(state.gyro_bias_radps.z, 0.0f, 0.0001f));
+  assert(Near(state.corrected_gyro_radps.x, 0.0f, 0.015f));
+  assert(Near(state.corrected_gyro_radps.y, 0.0f, 0.015f));
+  assert(Near(state.corrected_gyro_radps.z, gyro_bias_radps.z, 0.0001f));
 }
 
 void ExpectBodyFrameGyroUsesQuaternionKinematics() {

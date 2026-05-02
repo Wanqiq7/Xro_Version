@@ -16,6 +16,7 @@ depends: []
 
 #include "../../App/Config/BridgeConfig.hpp"
 #include "app_framework.hpp"
+#include "libxr_def.hpp"
 #include "libxr_rw.hpp"
 #include "message.hpp"
 #include "mutex.hpp"
@@ -322,9 +323,8 @@ class MasterMachine : public LibXR::Application {
 
  private:
   static constexpr std::uint8_t kProtocolSof = 0xA5;
-  static constexpr float kPi = 3.14159265358979323846f;
-  static constexpr float kDegToRad = kPi / 180.0f;
-  static constexpr float kRadToDeg = 180.0f / kPi;
+  static constexpr float kDegToRad = static_cast<float>(LibXR::PI / 180.0);
+  static constexpr float kRadToDeg = static_cast<float>(180.0 / LibXR::PI);
   static constexpr std::size_t kProtocolHeaderSize = 4;
   static constexpr std::size_t kProtocolOverheadSize = 8;
   static constexpr std::uint16_t kVisionRxCommandId = 0x0001;

@@ -69,6 +69,7 @@ class ChassisController : public ControllerBase {
   Config::ChassisForceControlConfig force_config_ =
       Config::kChassisForceControlConfig;
   ChassisPowerLimiter power_limiter_{};
+  ChassisPowerLimiter::Output power_limiter_output_{};
   SuperCap* super_cap_ = nullptr;
   std::uint32_t super_cap_cmd_counter_ = 0;
 
@@ -78,6 +79,10 @@ class ChassisController : public ControllerBase {
   VelocityEstimateState force_estimate_state_{};
   std::array<float, 4> target_wheel_omega_radps_{};
   std::array<float, 4> wheel_tau_ref_nm_{};
+  std::array<float, 4> current_wheel_speed_radps_{};
+  std::array<float, 4> current_cmd_raw_{};
+  std::array<float, 4> motor_speed_rpm_{};
+  std::array<float, 4> wheel_force_{};
 
   LibXR::Topic::ASyncSubscriber<RobotMode> robot_mode_subscriber_;
   LibXR::Topic::ASyncSubscriber<GimbalState> gimbal_state_subscriber_;

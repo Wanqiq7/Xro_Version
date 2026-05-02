@@ -6,6 +6,7 @@
 #include <cstdint>
 
 #include "../../App/Topics/InsState.hpp"
+#include "libxr_def.hpp"
 
 namespace InsAlgorithm {
 
@@ -32,6 +33,7 @@ class QuaternionInsEstimator {
     std::array<float, 4> quaternion{1.0f, 0.0f, 0.0f, 0.0f};
     App::Vector3f gyro_radps{};
     App::Vector3f gyro_bias_radps{};
+    App::Vector3f corrected_gyro_radps{};
     App::Vector3f motion_accel_body_g{};
     App::Vector3f motion_accel_nav_g{};
     App::Vector3f motion_accel_world_g{};
@@ -118,10 +120,10 @@ class QuaternionInsEstimator {
     float roll_rad = 0.0f;
   };
 
-  static constexpr float kPi = 3.14159265358979323846f;
-  static constexpr float kRadToDeg = 180.0f / kPi;
-  static constexpr float kDegToRad = kPi / 180.0f;
-  static constexpr float kGravityMps2 = 9.81f;
+  static constexpr float kRadToDeg = static_cast<float>(180.0 / LibXR::PI);
+  static constexpr float kDegToRad = static_cast<float>(LibXR::PI / 180.0);
+  static constexpr float kGravityMps2 =
+      static_cast<float>(LibXR::STANDARD_GRAVITY);
   static constexpr float kMaxDtS = 0.05f;
   static constexpr float kChiSquareThreshold = 1e-8f;
   static constexpr float kGyroStableThresholdRadps = 0.3f;
@@ -668,7 +670,9 @@ class QuaternionInsEstimator {
     }
     for (int row = 4; row < 6; ++row) {
       for (int col = 0; col < 3; ++col) {
-        gain[row][col] *= orientation_cosine_[row - 4] / (0.5f * kPi);
+        gain[row][col] *=
+            orientation_cosine_[row - 4] /
+            (0.5f * static_cast<float>(LibXR::PI));
       }
     }
 
@@ -723,8 +727,7 @@ class QuaternionInsEstimator {
         std::fabs(Norm(filtered_accel_mps2_) - kGravityMps2) <
             kAccelStableToleranceMps2;
     ApplyMeasurementUpdate(measured_accel_direction, stable_flag, dt_s);
-    state_.gyro_radps = gyro_radps;
-    state_.gyro_bias_radps = {xhat_[4], xhat_[5], 0.0f};
+    UpdateGyroState(gyro_radps);
     ++update_count_;
   }
 
@@ -736,8 +739,15 @@ class QuaternionInsEstimator {
     PredictState();
     xhat_ = xhatminus_;
     NormalizeQuaternion(xhat_);
+    UpdateGyroState(gyro_radps);
+  }
+
+  void UpdateGyroState(const App::Vector3f& gyro_radps) {
     state_.gyro_radps = gyro_radps;
     state_.gyro_bias_radps = {xhat_[4], xhat_[5], 0.0f};
+    // 6 状态 EKF 只能观测 X/Y 零偏；Z 轴 yaw bias 仍依赖 BMI088 静态校准。
+    state_.corrected_gyro_radps = {gyro_radps.x - xhat_[4],
+                                   gyro_radps.y - xhat_[5], gyro_radps.z};
   }
 
   void UpdateEulerFromQuaternion() {
@@ -745,12 +755,13 @@ class QuaternionInsEstimator {
     const float q1 = xhat_[1];
     const float q2 = xhat_[2];
     const float q3 = xhat_[3];
-    const float roll_rad = std::atan2(2.0f * (q0 * q1 + q2 * q3),
-                                      1.0f - 2.0f * (q1 * q1 + q2 * q2));
-    const float pitch_sin = Clamp(2.0f * (q0 * q2 - q3 * q1), -1.0f, 1.0f);
-    const float pitch_rad = std::asin(pitch_sin);
+    const float pitch_rad =
+        std::atan2(2.0f * (q0 * q1 + q2 * q3),
+                   2.0f * (q0 * q0 + q3 * q3) - 1.0f);
+    const float roll_sin = Clamp(2.0f * (q0 * q2 - q1 * q3), -1.0f, 1.0f);
+    const float roll_rad = std::asin(roll_sin);
     const float yaw_rad = std::atan2(2.0f * (q0 * q3 + q1 * q2),
-                                     1.0f - 2.0f * (q2 * q2 + q3 * q3));
+                                     2.0f * (q0 * q0 + q1 * q1) - 1.0f);
 
     state_.yaw_deg = yaw_rad * kRadToDeg;
     state_.pitch_deg = pitch_rad * kRadToDeg;

@@ -58,14 +58,15 @@ class INS : public LibXR::Application {
     while (true) {
       const auto now_us = LibXR::Timebase::GetMicroseconds();
       const auto now_ms = LibXR::Timebase::GetMilliseconds();
-      ins->PullSamples(now_us);
-      ins->UpdateAttitude(now_us);
+      const bool fresh_gyro = ins->PullSamples(now_us);
+      ins->UpdateAttitude(fresh_gyro);
       ins->RefreshStateSnapshot(now_ms);
       LibXR::Thread::Sleep(1);
     }
   }
 
-  void PullSamples(LibXR::MicrosecondTimestamp now_us) {
+  bool PullSamples(LibXR::MicrosecondTimestamp now_us) {
+    bool fresh_gyro = false;
     if (gyro_subscriber_.Available()) {
       gyro_data_ = gyro_subscriber_.GetData();
       gyro_subscriber_.StartWaiting();
@@ -73,6 +74,7 @@ class INS : public LibXR::Application {
       last_gyro_update_ms_ = static_cast<std::uint32_t>(
           LibXR::Timebase::GetMilliseconds());
       has_gyro_sample_ = true;
+      fresh_gyro = true;
     }
 
     if (accl_subscriber_.Available()) {
@@ -83,18 +85,20 @@ class INS : public LibXR::Application {
           LibXR::Timebase::GetMilliseconds());
       has_accl_sample_ = true;
     }
+
+    return fresh_gyro;
   }
 
-  void UpdateAttitude(LibXR::MicrosecondTimestamp now_us) {
-    if (!has_gyro_sample_ || !has_accl_sample_) {
+  void UpdateAttitude(bool fresh_gyro) {
+    if (!fresh_gyro || !has_gyro_sample_ || !has_accl_sample_) {
       return;
     }
 
     float dt_s = 0.0f;
     if (last_attitude_update_us_ != 0) {
-      dt_s = (now_us - last_attitude_update_us_).ToSecondf();
+      dt_s = (last_gyro_update_us_ - last_attitude_update_us_).ToSecondf();
     }
-    last_attitude_update_us_ = now_us;
+    last_attitude_update_us_ = last_gyro_update_us_;
 
     estimator_.Update(ToVector3f(gyro_data_), ToVector3f(accl_data_), dt_s);
   }
@@ -117,15 +121,19 @@ class INS : public LibXR::Application {
         estimator_ready && next_state.gyro_online && next_state.accl_online;
 
     const auto& estimator_state = estimator_.GetState();
-    next_state.yaw_rate_degps = estimator_state.gyro_radps.z * kRadToDeg;
-    next_state.pitch_rate_degps = estimator_state.gyro_radps.y * kRadToDeg;
-    next_state.roll_rate_degps = estimator_state.gyro_radps.x * kRadToDeg;
+    next_state.yaw_rate_degps =
+        estimator_state.corrected_gyro_radps.z * kRadToDeg;
+    next_state.pitch_rate_degps =
+        estimator_state.corrected_gyro_radps.x * kRadToDeg;
+    next_state.roll_rate_degps =
+        estimator_state.corrected_gyro_radps.y * kRadToDeg;
     next_state.yaw_deg = estimator_state.yaw_deg;
     next_state.pitch_deg = estimator_state.pitch_deg;
     next_state.roll_deg = estimator_state.roll_deg;
     next_state.yaw_total_deg = estimator_state.yaw_total_deg;
     next_state.quaternion = estimator_state.quaternion;
     next_state.gyro_bias_radps = estimator_state.gyro_bias_radps;
+    next_state.corrected_gyro_radps = estimator_state.corrected_gyro_radps;
     next_state.motion_accel_body_g = estimator_state.motion_accel_body_g;
     next_state.motion_accel_nav_g = estimator_state.motion_accel_nav_g;
     next_state.motion_accel_world_g = estimator_state.motion_accel_world_g;

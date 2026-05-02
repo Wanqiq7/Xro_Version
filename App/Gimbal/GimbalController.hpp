@@ -52,8 +52,12 @@ class GimbalController : public ControllerBase {
   bool IsRobotReady() const;
   void SyncYawMotorStateSummary();
   void SyncPitchMotorStateSummary();
-  void ApplyYawMotorControl(bool robot_ready);
-  void ApplyPitchMotorControl(bool robot_ready);
+  float ComputeManualControlDeltaTimeSeconds();
+  float ResolveYawCommandDeg(bool robot_ready, bool feedback_ready, float dt_s);
+  float ResolvePitchCommandDeg(bool robot_ready, bool feedback_ready,
+                               float dt_s);
+  void ApplyYawMotorControl(bool robot_ready, float dt_s);
+  void ApplyPitchMotorControl(bool robot_ready, float dt_s);
   void UpdateGimbalState(bool robot_ready);
 
   const AimCommand& aim_command_;
@@ -65,6 +69,11 @@ class GimbalController : public ControllerBase {
   DMMotor& pitch_motor_;
   YawControlState yaw_state_{};
   AxisState pitch_state_{};
+  float manual_yaw_target_deg_ = 0.0f;
+  float manual_pitch_target_deg_ = 0.0f;
+  bool manual_yaw_target_initialized_ = false;
+  bool manual_pitch_target_initialized_ = false;
+  LibXR::MicrosecondTimestamp last_manual_control_time_us_ = 0;
 
   LibXR::Topic::ASyncSubscriber<RobotMode> robot_mode_subscriber_;
   LibXR::Topic::ASyncSubscriber<InsState> ins_state_subscriber_;

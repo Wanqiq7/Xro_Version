@@ -83,66 +83,103 @@ extern "C" void app_main(void) {
   /* User Code End 2 */
   // clang-format off
   // NOLINTBEGIN
-  STM32TimerTimebase timebase(&htim14);
+  static STM32TimerTimebase timebase(&htim14);
   PlatformInit(2, 1024);
-  STM32PowerManager power_manager;
+  static STM32PowerManager power_manager;
 
   /* GPIO Configuration */
-  STM32GPIO KEY(KEY_GPIO_Port, KEY_Pin);
-  STM32GPIO CS1_ACCEL(CS1_ACCEL_GPIO_Port, CS1_ACCEL_Pin);
-  STM32GPIO CS1_GYRO(CS1_GYRO_GPIO_Port, CS1_GYRO_Pin);
-  STM32GPIO INT_ACC(INT_ACC_GPIO_Port, INT_ACC_Pin, EXTI4_IRQn);
-  STM32GPIO INT_GYRO(INT_GYRO_GPIO_Port, INT_GYRO_Pin, EXTI9_5_IRQn);
-  STM32GPIO INT_MAG(INT_MAG_GPIO_Port, INT_MAG_Pin, EXTI3_IRQn);
-  STM32GPIO MAG_RST(MAG_RST_GPIO_Port, MAG_RST_Pin);
+  static STM32GPIO KEY(KEY_GPIO_Port, KEY_Pin);
+  static STM32GPIO CS1_ACCEL(CS1_ACCEL_GPIO_Port, CS1_ACCEL_Pin);
+  static STM32GPIO CS1_GYRO(CS1_GYRO_GPIO_Port, CS1_GYRO_Pin);
+  static STM32GPIO INT_ACC(INT_ACC_GPIO_Port, INT_ACC_Pin, EXTI4_IRQn);
+  static STM32GPIO INT_GYRO(INT_GYRO_GPIO_Port, INT_GYRO_Pin, EXTI9_5_IRQn);
+  static STM32GPIO INT_MAG(INT_MAG_GPIO_Port, INT_MAG_Pin, EXTI3_IRQn);
+  static STM32GPIO MAG_RST(MAG_RST_GPIO_Port, MAG_RST_Pin);
 
-  STM32ADC adc1(&hadc1, adc1_buf, {ADC_CHANNEL_TEMPSENSOR, ADC_CHANNEL_VREFINT}, 3.3);
-  auto adc1_adc_channel_tempsensor = adc1.GetChannel(0);
+  static STM32ADC adc1(&hadc1, adc1_buf, {ADC_CHANNEL_TEMPSENSOR, ADC_CHANNEL_VREFINT}, 3.3);
+  static auto adc1_adc_channel_tempsensor = adc1.GetChannel(0);
   UNUSED(adc1_adc_channel_tempsensor);
-  auto adc1_adc_channel_vrefint = adc1.GetChannel(1);
+  static auto adc1_adc_channel_vrefint = adc1.GetChannel(1);
   UNUSED(adc1_adc_channel_vrefint);
 
-  STM32PWM pwm_tim1_ch1(&htim1, TIM_CHANNEL_1, false);
-  STM32PWM pwm_tim1_ch2(&htim1, TIM_CHANNEL_2, false);
-  STM32PWM pwm_tim1_ch3(&htim1, TIM_CHANNEL_3, false);
-  STM32PWM pwm_tim1_ch4(&htim1, TIM_CHANNEL_4, false);
+  static STM32PWM pwm_tim1_ch1(&htim1, TIM_CHANNEL_1, false);
+  static STM32PWM pwm_tim1_ch2(&htim1, TIM_CHANNEL_2, false);
+  static STM32PWM pwm_tim1_ch3(&htim1, TIM_CHANNEL_3, false);
+  static STM32PWM pwm_tim1_ch4(&htim1, TIM_CHANNEL_4, false);
 
-  STM32PWM pwm_tim10_ch1(&htim10, TIM_CHANNEL_1, false);
+  static STM32PWM pwm_tim10_ch1(&htim10, TIM_CHANNEL_1, false);
 
-  STM32PWM pwm_tim4_ch3(&htim4, TIM_CHANNEL_3, false);
+  static STM32PWM pwm_tim4_ch3(&htim4, TIM_CHANNEL_3, false);
 
-  STM32PWM pwm_tim5_ch1(&htim5, TIM_CHANNEL_1, false);
-  STM32PWM pwm_tim5_ch2(&htim5, TIM_CHANNEL_2, false);
-  STM32PWM pwm_tim5_ch3(&htim5, TIM_CHANNEL_3, false);
+  static STM32PWM pwm_tim5_ch1(&htim5, TIM_CHANNEL_1, false);
+  static STM32PWM pwm_tim5_ch2(&htim5, TIM_CHANNEL_2, false);
+  static STM32PWM pwm_tim5_ch3(&htim5, TIM_CHANNEL_3, false);
 
-  STM32DAC dac_out2(&hdac, DAC_CHANNEL_2, 0.0, 3.3);
+  static STM32DAC dac_out2(&hdac, DAC_CHANNEL_2, 0.0, 3.3);
 
-  STM32SPI spi1(&hspi1, spi1_rx_buf, spi1_tx_buf, 3);
+  static STM32SPI spi1(&hspi1, spi1_rx_buf, spi1_tx_buf, 3);
 
-  STM32SPI spi2(&hspi2, {nullptr, 0}, {nullptr, 0}, 3);
+  static STM32SPI spi2(&hspi2, {nullptr, 0}, {nullptr, 0}, 3);
 
-  STM32UART usart1(&huart1,
+  static STM32UART usart1(&huart1,
               usart1_rx_buf, usart1_tx_buf, 5);
 
-  STM32UART usart2(&huart2,
+  static STM32UART usart2(&huart2,
               usart2_rx_buf, {nullptr, 0}, 5);
 
-  STM32UART usart3(&huart3,
+  static STM32UART usart3(&huart3,
               usart3_rx_buf, {nullptr, 0}, 5);
 
-  STM32UART usart6(&huart6,
+  static STM32UART usart6(&huart6,
               usart6_rx_buf, usart6_tx_buf, 5);
 
-  STM32I2C i2c2(&hi2c2, i2c2_buf, 3);
+  static STM32I2C i2c2(&hi2c2, i2c2_buf, 3);
 
-  STM32I2C i2c3(&hi2c3, i2c3_buf, 3);
+  static STM32I2C i2c3(&hi2c3, i2c3_buf, 3);
 
-  STM32CAN can1(&hcan1, 5);
+  static STM32CAN can1(&hcan1, 5);
 
-  STM32CAN can2(&hcan2, 5);
+  static STM32CAN can2(&hcan2, 5);
 
-  LibXR::USB::CDCUart vcp_master_machine(256, 256, 5);
-  STM32USBDeviceOtgFS usb_otg_fs(
+  /* Terminal Configuration */
+
+  static LibXR::HardwareContainer peripherals;
+  peripherals.Register(LibXR::Entry<LibXR::PowerManager>({power_manager, {"power_manager"}}));
+  peripherals.Register(LibXR::Entry<LibXR::GPIO>({KEY, {"KEY"}}));
+  peripherals.Register(LibXR::Entry<LibXR::GPIO>({CS1_ACCEL, {"CS1_ACCEL"}}));
+  peripherals.Register(LibXR::Entry<LibXR::GPIO>({CS1_GYRO, {"CS1_GYRO"}}));
+  peripherals.Register(LibXR::Entry<LibXR::GPIO>({INT_ACC, {"INT_ACC"}}));
+  peripherals.Register(LibXR::Entry<LibXR::GPIO>({INT_GYRO, {"INT_GYRO"}}));
+  peripherals.Register(LibXR::Entry<LibXR::GPIO>({INT_MAG, {"INT_MAG"}}));
+  peripherals.Register(LibXR::Entry<LibXR::GPIO>({MAG_RST, {"MAG_RST"}}));
+  peripherals.Register(LibXR::Entry<LibXR::PWM>({pwm_tim1_ch1, {"pwm_tim1_ch1"}}));
+  peripherals.Register(LibXR::Entry<LibXR::PWM>({pwm_tim1_ch2, {"pwm_tim1_ch2"}}));
+  peripherals.Register(LibXR::Entry<LibXR::PWM>({pwm_tim1_ch3, {"pwm_tim1_ch3"}}));
+  peripherals.Register(LibXR::Entry<LibXR::PWM>({pwm_tim1_ch4, {"pwm_tim1_ch4"}}));
+  peripherals.Register(LibXR::Entry<LibXR::PWM>({pwm_tim10_ch1, {"pwm_tim10_ch1"}}));
+  peripherals.Register(LibXR::Entry<LibXR::PWM>({pwm_tim4_ch3, {"pwm_tim4_ch3"}}));
+  peripherals.Register(LibXR::Entry<LibXR::PWM>({pwm_tim5_ch1, {"pwm_tim5_ch1"}}));
+  peripherals.Register(LibXR::Entry<LibXR::PWM>({pwm_tim5_ch2, {"pwm_tim5_ch2"}}));
+  peripherals.Register(LibXR::Entry<LibXR::PWM>({pwm_tim5_ch3, {"pwm_tim5_ch3"}}));
+  peripherals.Register(LibXR::Entry<LibXR::ADC>({adc1_adc_channel_tempsensor, {"adc1_adc_channel_tempsensor"}}));
+  peripherals.Register(LibXR::Entry<LibXR::ADC>({adc1_adc_channel_vrefint, {"adc1_adc_channel_vrefint"}}));
+  peripherals.Register(LibXR::Entry<LibXR::DAC>({dac_out2, {"dac_out2"}}));
+  peripherals.Register(LibXR::Entry<LibXR::SPI>({spi1, {"spi1"}}));
+  peripherals.Register(LibXR::Entry<LibXR::SPI>({spi2, {"spi2"}}));
+  peripherals.Register(LibXR::Entry<LibXR::UART>({usart1, {"usart1"}}));
+  peripherals.Register(LibXR::Entry<LibXR::UART>({usart2, {"usart2"}}));
+  peripherals.Register(LibXR::Entry<LibXR::UART>({usart3, {"usart3"}}));
+  peripherals.Register(LibXR::Entry<LibXR::UART>({usart6, {"usart6"}}));
+  peripherals.Register(LibXR::Entry<LibXR::I2C>({i2c2, {"i2c2"}}));
+  peripherals.Register(LibXR::Entry<LibXR::I2C>({i2c3, {"i2c3"}}));
+  peripherals.Register(LibXR::Entry<LibXR::CAN>({can1, {"can1"}}));
+  peripherals.Register(LibXR::Entry<LibXR::CAN>({can2, {"can2"}}));
+
+  // clang-format on
+  // NOLINTEND
+  /* User Code Begin 3 */
+  static LibXR::USB::CDCUart vcp_master_machine(256, 256, 5);
+  static STM32USBDeviceOtgFS usb_otg_fs(
       &hpcd_USB_OTG_FS, 128,
       {
           LibXR::RawData{usb_ep0_out_buffer, sizeof(usb_ep0_out_buffer)},
@@ -163,48 +200,9 @@ extern "C" void app_main(void) {
   usb_otg_fs.Init(false);
   usb_otg_fs.Start(false);
 
-  /* Terminal Configuration */
-
-
-  LibXR::HardwareContainer peripherals{
-    LibXR::Entry<LibXR::PowerManager>({power_manager, {"power_manager"}}),
-    LibXR::Entry<LibXR::GPIO>({KEY, {"KEY"}}),
-    LibXR::Entry<LibXR::GPIO>({CS1_ACCEL, {"CS1_ACCEL"}}),
-    LibXR::Entry<LibXR::GPIO>({CS1_GYRO, {"CS1_GYRO"}}),
-    LibXR::Entry<LibXR::GPIO>({INT_ACC, {"INT_ACC"}}),
-    LibXR::Entry<LibXR::GPIO>({INT_GYRO, {"INT_GYRO"}}),
-    LibXR::Entry<LibXR::GPIO>({INT_MAG, {"INT_MAG"}}),
-    LibXR::Entry<LibXR::GPIO>({MAG_RST, {"MAG_RST"}}),
-    LibXR::Entry<LibXR::PWM>({pwm_tim1_ch1, {"pwm_tim1_ch1"}}),
-    LibXR::Entry<LibXR::PWM>({pwm_tim1_ch2, {"pwm_tim1_ch2"}}),
-    LibXR::Entry<LibXR::PWM>({pwm_tim1_ch3, {"pwm_tim1_ch3"}}),
-    LibXR::Entry<LibXR::PWM>({pwm_tim1_ch4, {"pwm_tim1_ch4"}}),
-    LibXR::Entry<LibXR::PWM>({pwm_tim10_ch1, {"pwm_tim10_ch1"}}),
-    LibXR::Entry<LibXR::PWM>({pwm_tim4_ch3, {"pwm_tim4_ch3"}}),
-    LibXR::Entry<LibXR::PWM>({pwm_tim5_ch1, {"pwm_tim5_ch1"}}),
-    LibXR::Entry<LibXR::PWM>({pwm_tim5_ch2, {"pwm_tim5_ch2"}}),
-    LibXR::Entry<LibXR::PWM>({pwm_tim5_ch3, {"pwm_tim5_ch3"}}),
-    LibXR::Entry<LibXR::ADC>({adc1_adc_channel_tempsensor, {"adc1_adc_channel_tempsensor"}}),
-    LibXR::Entry<LibXR::ADC>({adc1_adc_channel_vrefint, {"adc1_adc_channel_vrefint"}}),
-    LibXR::Entry<LibXR::DAC>({dac_out2, {"dac_out2"}}),
-    LibXR::Entry<LibXR::SPI>({spi1, {"spi1"}}),
-    LibXR::Entry<LibXR::SPI>({spi2, {"spi2"}}),
-    LibXR::Entry<LibXR::UART>({usart1, {"usart1"}}),
-    LibXR::Entry<LibXR::UART>({usart2, {"usart2"}}),
-    LibXR::Entry<LibXR::UART>({usart3, {"usart3"}}),
-    LibXR::Entry<LibXR::UART>({usart6, {"usart6"}}),
-    LibXR::Entry<LibXR::I2C>({i2c2, {"i2c2"}}),
-    LibXR::Entry<LibXR::I2C>({i2c3, {"i2c3"}}),
-    LibXR::Entry<LibXR::CAN>({can1, {"can1"}}),
-    LibXR::Entry<LibXR::CAN>({can2, {"can2"}})
-  };
-
-  // clang-format on
-  // NOLINTEND
-  /* User Code Begin 3 */
-  STM32Flash flash(FLASH_SECTORS, FLASH_SECTOR_NUMBER);
-  DatabaseRawSequential database(flash);
-  RamFS ramfs;
+  static STM32Flash flash(FLASH_SECTORS, FLASH_SECTOR_NUMBER);
+  static DatabaseRawSequential database(flash);
+  static RamFS ramfs;
 
   peripherals.Register(Entry<GPIO>{CS1_ACCEL, {"bmi088_accl_cs"}});
   peripherals.Register(Entry<GPIO>{CS1_GYRO, {"bmi088_gyro_cs"}});

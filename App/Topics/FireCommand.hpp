@@ -23,6 +23,8 @@ struct FireCommand {
   float target_bullet_speed_mps = 0.0f;
   float shoot_rate_hz = 0.0f;
   bool referee_allows_fire = false;
+  // 承接人工遥控强制拨弹/调试语义，不能绕过系统急停、机器人 Safe 或电机安全停机。
+  bool ignore_referee_fire_gate = false;
   std::uint16_t shooter_heat_limit = 0;
   std::uint16_t remaining_heat = 0;
   uint8_t burst_count = 0;

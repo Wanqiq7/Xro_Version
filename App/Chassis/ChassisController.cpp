@@ -2,19 +2,20 @@
 
 #include <cmath>
 
+#include "ChassisControlMath.hpp"
 #include "../Config/AppConfig.hpp"
 #include "../../Modules/DJIMotor/DJIMotor.hpp"
+#include "libxr_def.hpp"
 
 namespace App {
 
 namespace {
 
 constexpr std::size_t kWheelCount = 4;
-constexpr float kPi = 3.14159265358979323846f;
-constexpr float kRpmToRadps = 2.0f * kPi / 60.0f;
-constexpr float kRadpsToDegps = 180.0f / kPi;
-constexpr float kRadToDeg = 180.0f / kPi;
-constexpr float kDegToRad = kPi / 180.0f;
+constexpr float kRpmToRadps = static_cast<float>(LibXR::TWO_PI / 60.0);
+constexpr float kRadpsToDegps = static_cast<float>(180.0 / LibXR::PI);
+constexpr float kRadToDeg = static_cast<float>(180.0 / LibXR::PI);
+constexpr float kDegToRad = static_cast<float>(LibXR::PI / 180.0);
 constexpr float kFollowGimbalYawGain = 1.5f;
 constexpr float kSpinAngularSpeedRadps = 6.0f;
 constexpr float kCommandFollowRateHz = 5.0f;
@@ -77,7 +78,7 @@ MotionCommand BuildAppliedMotionCommand(
 
   if (command.motion_mode == MotionModeType::kFollowGimbal &&
       gimbal_state.online) {
-    const float yaw_error_deg = gimbal_state.yaw_deg;
+    const float yaw_error_deg = SelectFollowGimbalYawErrorDeg(gimbal_state);
     applied.wz_radps = ClampAbs(
         -kFollowGimbalYawGain * yaw_error_deg * std::fabs(yaw_error_deg) *
             kDegToRad,
@@ -94,7 +95,7 @@ MotionCommand BuildAppliedMotionCommand(
     should_rotate = true;
   } else if (command.motion_mode == MotionModeType::kFollowGimbal &&
              gimbal_state.online) {
-    projection_yaw_deg = gimbal_state.yaw_deg;
+    projection_yaw_deg = SelectFollowGimbalYawErrorDeg(gimbal_state);
     should_rotate = true;
   }
 
@@ -409,13 +410,13 @@ void ChassisController::UpdateForceControl(
       SolveWheelTargets(applied_motion_command_, actuator_config_);
 
   // Step 2: 读取反馈
-  const auto current_wheel_speed_radps = ReadWheelSpeedRadps(wheel_motors_);
-  const auto current_cmd_raw = ReadWheelCurrentCommandRaw(wheel_motors_);
-  const auto motor_speed_rpm = ReadWheelRotorSpeedRpm(wheel_motors_);
+  current_wheel_speed_radps_ = ReadWheelSpeedRadps(wheel_motors_);
+  current_cmd_raw_ = ReadWheelCurrentCommandRaw(wheel_motors_);
+  motor_speed_rpm_ = ReadWheelRotorSpeedRpm(wheel_motors_);
 
   // Step 3: 正运动学 + LPF 速度估计
   force_estimate_state_ = EstimateChassisVelocityForce(
-      current_wheel_speed_radps, force_config_, actuator_config_,
+      current_wheel_speed_radps_, force_config_, actuator_config_,
       force_estimate_state_);
 
   // Step 4: 底盘级力 PID
@@ -461,25 +462,24 @@ void ChassisController::UpdateForceControl(
   const float inv_4r =
       rotation_arm > 0.0f ? 1.0f / (4.0f * rotation_arm) : 0.0f;
 
-  std::array<float, kWheelCount> wheel_force{};
-  wheel_force[static_cast<size_t>(Config::WheelIndex::kFrontLeft)] =
+  wheel_force_[static_cast<size_t>(Config::WheelIndex::kFrontLeft)] =
       (force_x - force_y) * inv_4 - torque_z * inv_4r;
-  wheel_force[static_cast<size_t>(Config::WheelIndex::kFrontRight)] =
+  wheel_force_[static_cast<size_t>(Config::WheelIndex::kFrontRight)] =
       (force_x + force_y) * inv_4 + torque_z * inv_4r;
-  wheel_force[static_cast<size_t>(Config::WheelIndex::kRearLeft)] =
+  wheel_force_[static_cast<size_t>(Config::WheelIndex::kRearLeft)] =
       (force_x + force_y) * inv_4 - torque_z * inv_4r;
-  wheel_force[static_cast<size_t>(Config::WheelIndex::kRearRight)] =
+  wheel_force_[static_cast<size_t>(Config::WheelIndex::kRearRight)] =
       (force_x - force_y) * inv_4 + torque_z * inv_4r;
 
   // Step 6: 力→扭矩（含阻尼 + Stribeck 摩擦补偿）
   const float wheel_radius = std::max(actuator_config_.wheel_radius_m, 0.001f);
   for (std::size_t i = 0; i < kWheelCount; ++i) {
-    const float base_tau = wheel_force[i] * wheel_radius;
+    const float base_tau = wheel_force_[i] * wheel_radius;
     const float speed_damping =
         force_config_.friction.speed_feedback_gain *
-        (target_wheel_omega_radps_[i] - current_wheel_speed_radps[i]);
+        (target_wheel_omega_radps_[i] - current_wheel_speed_radps_[i]);
     const float friction = CalculateFrictionCompensation(
-        target_wheel_omega_radps_[i], current_wheel_speed_radps[i],
+        target_wheel_omega_radps_[i], current_wheel_speed_radps_[i],
         force_config_.friction);
     wheel_tau_ref_nm_[i] =
         ClampAbs(base_tau + speed_damping + friction,
@@ -494,22 +494,22 @@ void ChassisController::UpdateForceControl(
           : 0.001f;
   last_power_update_us_ = now_us_power;
 
-  const auto power_limited_output = power_limiter_.Apply(
+  power_limiter_.Apply(
       ChassisPowerLimiter::Input{
           .command = applied_motion_command_,
           .referee = referee_constraints,
           .super_cap = super_cap_state_,
-          .current_wheel_speed_radps = current_wheel_speed_radps,
+          .current_wheel_speed_radps = current_wheel_speed_radps_,
           .target_wheel_speed_radps = target_wheel_omega_radps_,
           .wheel_tau_ref_nm = wheel_tau_ref_nm_,
-          .current_cmd_raw = current_cmd_raw,
-          .motor_speed_rpm = motor_speed_rpm,
+          .current_cmd_raw = current_cmd_raw_,
+          .motor_speed_rpm = motor_speed_rpm_,
       },
-      power_dt_s);
-  applied_motion_command_ = power_limited_output.command;
+      power_dt_s, power_limiter_output_);
+  applied_motion_command_ = power_limiter_output_.command;
 
   // Step 8: 下发扭矩（使用功率限制后的 tau，直接接管电流输出）
-  ApplyWheelTorques(wheel_motors_, power_limited_output.limited_wheel_tau_ref_nm,
+  ApplyWheelTorques(wheel_motors_, power_limiter_output_.limited_wheel_tau_ref_nm,
                     output_enabled_, force_config_.torque_constant_nm_per_a);
 
   SendSuperCapCommand(referee_constraints);

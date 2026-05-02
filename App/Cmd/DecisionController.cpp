@@ -133,8 +133,10 @@ AimCommand DecisionController::BuildAimCommand(
 
   AimCommand aim_command{};
   aim_command.aim_mode = robot_mode.aim_mode;
-  aim_command.yaw_deg = input.target_yaw_deg + input.yaw_delta_deg;
-  aim_command.pitch_deg = input.target_pitch_deg + input.pitch_delta_deg;
+  aim_command.yaw_deg = input.target_yaw_deg;
+  aim_command.pitch_deg = input.target_pitch_deg;
+  aim_command.yaw_rate_degps = input.yaw_rate_degps;
+  aim_command.pitch_rate_degps = input.pitch_rate_degps;
   aim_command.track_target = input.track_target || input.request_auto_aim;
   return aim_command;
 }
@@ -148,8 +150,11 @@ FireCommand DecisionController::BuildFireCommand(
 
   FireCommand fire_command{};
   fire_command.friction_enable = input.friction_enabled;
+  fire_command.ignore_referee_fire_gate = input.ignore_referee_fire_gate;
+  const bool fire_gate_open =
+      constraints.referee_allows_fire || input.ignore_referee_fire_gate;
   fire_command.fire_enable = input.fire_enabled && input.friction_enabled &&
-                             constraints.referee_allows_fire;
+                             fire_gate_open;
   if (fire_command.friction_enable &&
       (fire_command.fire_enable ||
        IsSingleLikeLoaderMode(input.requested_loader_mode))) {
@@ -167,7 +172,7 @@ FireCommand DecisionController::BuildFireCommand(
   fire_command.burst_count =
       fire_command.fire_enable ? input.requested_burst_count : 0;
 
-  if (constraints.referee_online) {
+  if (constraints.referee_online && !input.ignore_referee_fire_gate) {
     fire_command.shoot_rate_hz =
         std::min(fire_command.shoot_rate_hz, constraints.max_fire_rate_hz);
   }

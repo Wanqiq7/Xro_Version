@@ -63,9 +63,9 @@ class ChassisPowerLimiter {
   /// @brief 功率限制主入口
   /// @param input 外部输入（裁判约束、超级电容状态、PID 力矩、轮速）
   /// @param dt_s 距上次调用时间 (s)，供能量环积分和 RLS 遗忘
-  /// @return 功率限制后的力矩与 diagnostic 信息
-  Output Apply(const Input& input, float dt_s) {
-    Output output{};
+  /// @param output 功率限制后的力矩与 diagnostic 信息
+  void Apply(const Input& input, float dt_s, Output& output) {
+    output = Output{};
 
     // ── 1. 构建能量输入 ──
     ChassisPowerController::EnergyInput energy_input{};
@@ -126,6 +126,12 @@ class ChassisPowerLimiter {
     output.command.power_limited = output.power_limited;
     output.command.chassis_power_limit_w = output.active_power_limit_w;
 
+  }
+
+  /// @brief 兼容旧调用方式；新代码优先使用带 Output 引用的重载。
+  Output Apply(const Input& input, float dt_s) {
+    Output output{};
+    Apply(input, dt_s, output);
     return output;
   }
 

@@ -38,7 +38,7 @@ inline constexpr DJIMotorPidConfig kYawMotorPid{
             .d = 0.3f,
             .i_limit = 0.0f,
             .out_limit = 720.0f,
-            .cycle = true,
+            .cycle = false,
         },
 };
 

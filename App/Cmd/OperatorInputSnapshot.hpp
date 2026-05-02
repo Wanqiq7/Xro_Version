@@ -56,6 +56,8 @@ struct OperatorInputSnapshot {
 
   bool fire_enabled = false;
   bool friction_enabled = false;
+  // 人工遥控强制拨弹/调试语义：仅表示输入意图，不能绕过系统急停、机器人 Safe 或电机安全停机。
+  bool ignore_referee_fire_gate = false;
   bool trigger_pressed = false;
   std::uint32_t shot_request_seq = 0;
   float target_bullet_speed_mps = 0.0f;
@@ -68,8 +70,8 @@ struct OperatorInputSnapshot {
 
   float target_yaw_deg = 0.0f;
   float target_pitch_deg = 0.0f;
-  float yaw_delta_deg = 0.0f;
-  float pitch_delta_deg = 0.0f;
+  float yaw_rate_degps = 0.0f;
+  float pitch_rate_degps = 0.0f;
   bool track_target = false;
 
   ManualKeyState manual_keys;

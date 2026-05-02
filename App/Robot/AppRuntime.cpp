@@ -24,6 +24,14 @@ SuperCap::Config MakeSuperCapConfig() {
   return config;
 }
 
+// HeroCode 的温控 PID 输出范围是 0..2000，再映射成 0.0..1.0 占空比。
+// LibXR PWM 接口直接使用占空比，因此这里保留同等控制强度。
+// 目标温度对齐 ins_task.c 中的 RefTemp = 45。
+constexpr float kBmi088HeatP = 1000.0f / 2000.0f;
+constexpr float kBmi088HeatI = 20.0f / 2000.0f;
+constexpr float kBmi088HeatOutputLimit = 1.0f;
+constexpr float kBmi088TargetTemperatureC = 45.0f;
+
 }  // namespace
 
 namespace App {
@@ -50,23 +58,25 @@ AppRuntime::AppRuntime(LibXR::HardwareContainer &hardware,
           AppConfig::kSystemHealthTopicName, &topic_domain_, false, true,
           true)),
       // --- 传感器模块 ---
+      // BMI088 采样率和量程与 HeroCode 的 BMI088driver.c 保持一致，
+      // 保证陀螺仪零偏校准和 IMU 原始输入特性对齐。
       bmi088_(hardware, application_manager,
-              BMI088::GyroFreq::GYRO_2000HZ_BW532HZ,
-              BMI088::AcclFreq::ACCL_1600HZ,
+              BMI088::GyroFreq::GYRO_2000HZ_BW230HZ,
+              BMI088::AcclFreq::ACCL_800HZ,
               BMI088::GyroRange::DEG_2000DPS,
-              BMI088::AcclRange::ACCL_24G,
+              BMI088::AcclRange::ACCL_6G,
               LibXR::Quaternion<float>(1.0f, 0.0f, 0.0f, 0.0f),
               LibXR::PID<float>::Param{
                   .k = 1.0f,
-                  .p = 1000.0f,
-                  .i = 20.0f,
+                  .p = kBmi088HeatP,
+                  .i = kBmi088HeatI,
                   .d = 0.0f,
                   .i_limit = 300.0f,
-                  .out_limit = 2000.0f,
+                  .out_limit = kBmi088HeatOutputLimit,
                   .cycle = false,
               },
               AppConfig::kBmi088GyroTopicName,
-              AppConfig::kBmi088AcclTopicName, 40.0f, 2048),
+              AppConfig::kBmi088AcclTopicName, kBmi088TargetTemperatureC, 2048),
       ins_(application_manager, AppConfig::kBmi088GyroTopicName,
            AppConfig::kBmi088AcclTopicName, AppConfig::kInsStateTopicName,
            &topic_domain_, 2048),

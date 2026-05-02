@@ -2,11 +2,12 @@
 
 #include <cmath>
 
+#include "libxr_def.hpp"
+
 namespace App::GimbalMath {
 
-inline constexpr float kPi = 3.14159265358979323846f;
-inline constexpr float kDegToRad = kPi / 180.0f;
-inline constexpr float kRadToDeg = 180.0f / kPi;
+inline constexpr float kDegToRad = static_cast<float>(LibXR::PI / 180.0);
+inline constexpr float kRadToDeg = static_cast<float>(180.0 / LibXR::PI);
 
 constexpr float DegreesToRadians(float degrees) { return degrees * kDegToRad; }
 

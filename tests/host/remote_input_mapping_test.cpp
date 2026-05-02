@@ -1,9 +1,14 @@
 #include <cassert>
+#include <cmath>
 
 #include "App/Cmd/OperatorInputSnapshot.hpp"
 #include "App/Cmd/RemoteInputMapper.hpp"
 
 namespace {
+
+void ExpectNear(float actual, float expected) {
+  assert(std::fabs(actual - expected) < 0.0001f);
+}
 
 void ExpectDefaultSnapshotIsSafe() {
   const App::OperatorInputSnapshot snapshot;
@@ -22,10 +27,11 @@ void ExpectDefaultSnapshotIsSafe() {
   assert(snapshot.chassis_speed_scale == 0.0f);
   assert(!snapshot.power_boost_requested);
 
-  assert(snapshot.yaw_delta_deg == 0.0f);
-  assert(snapshot.pitch_delta_deg == 0.0f);
+  assert(snapshot.yaw_rate_degps == 0.0f);
+  assert(snapshot.pitch_rate_degps == 0.0f);
   assert(!snapshot.fire_enabled);
   assert(!snapshot.friction_enabled);
+  assert(!snapshot.ignore_referee_fire_gate);
   assert(snapshot.target_vx_mps == 0.0f);
   assert(snapshot.target_vy_mps == 0.0f);
   assert(snapshot.target_wz_radps == 0.0f);
@@ -58,118 +64,138 @@ void ExpectNoSourceWhenBothOffline() {
          App::InputSourceSelection::none);
 }
 
-void ExpectDT7DialEmergencyLatchAndRightSwitchUpClears() {
+void ExpectDT7OfflineStaysSafeAndClearsExecutionIntent() {
   App::InputLatchState latch;
   App::OperatorInputSnapshot snapshot = App::BuildSafeInputSnapshot();
   App::DT7InputState input;
   input.online = true;
-  input.left_switch = App::RemoteSwitchPosition::kDown;
-  input.right_switch = App::RemoteSwitchPosition::kDown;
-  input.dial = 400;
-
-  App::ApplyDT7Input(input, latch, snapshot);
-  assert(snapshot.emergency_latched);
-  assert(snapshot.request_safe_mode);
-
-  input.dial = 0;
+  input.left_switch = App::RemoteSwitchPosition::kUp;
   input.right_switch = App::RemoteSwitchPosition::kUp;
+  input.dial = App::InputConfig::kDialEmergencyThreshold;
+
   App::ApplyDT7Input(input, latch, snapshot);
-  assert(!snapshot.emergency_latched);
+  assert(snapshot.friction_enabled);
+  assert(snapshot.fire_enabled);
+  assert(snapshot.requested_loader_mode == App::LoaderModeType::kContinuous);
+  assert(snapshot.ignore_referee_fire_gate);
+
+  input.online = false;
+  App::ApplyDT7Input(input, latch, snapshot);
+  assert(snapshot.request_safe_mode);
+  assert(snapshot.emergency_latched);
+  assert(!snapshot.has_active_source);
+  assert(!snapshot.request_manual_mode);
+  assert(!snapshot.friction_enabled);
+  assert(!snapshot.fire_enabled);
+  assert(snapshot.requested_loader_mode == App::LoaderModeType::kStop);
+  assert(!snapshot.ignore_referee_fire_gate);
+
+  input.online = true;
+  input.right_switch = App::RemoteSwitchPosition::kDown;
+  App::ApplyDT7Input(input, latch, snapshot);
+  assert(!snapshot.friction_enabled);
+  assert(!snapshot.fire_enabled);
+  assert(snapshot.requested_loader_mode == App::LoaderModeType::kStop);
+  assert(!snapshot.ignore_referee_fire_gate);
+}
+
+void ExpectDT7DialSelectsManualOrSafe() {
+  App::InputLatchState latch;
+  App::OperatorInputSnapshot snapshot = App::BuildSafeInputSnapshot();
+  App::DT7InputState input;
+  input.online = true;
+  input.left_switch = App::RemoteSwitchPosition::kMiddle;
+  input.right_switch = App::RemoteSwitchPosition::kMiddle;
+  input.dial = App::InputConfig::kDialEmergencyThreshold;
+
+  App::ApplyDT7Input(input, latch, snapshot);
+  assert(snapshot.has_active_source);
+  assert(snapshot.control_source == App::ControlSource::kRemote);
+  assert(snapshot.request_manual_mode);
   assert(!snapshot.request_safe_mode);
+  assert(!snapshot.emergency_latched);
+  assert(snapshot.requested_aim_mode == App::AimModeType::kManual);
+
+  input.dial = App::InputConfig::kDialEmergencyThreshold + 1;
+  App::ApplyDT7Input(input, latch, snapshot);
+  assert(snapshot.request_safe_mode);
+  assert(snapshot.emergency_latched);
+  assert(!snapshot.request_manual_mode);
+  assert(!snapshot.friction_enabled);
+  assert(!snapshot.fire_enabled);
+  assert(snapshot.requested_loader_mode == App::LoaderModeType::kStop);
+  assert(!snapshot.ignore_referee_fire_gate);
+}
+
+void ExpectDT7LeftSwitchMapsMotionModesAndUsesSticks() {
+  App::InputLatchState latch;
+  App::OperatorInputSnapshot snapshot = App::BuildSafeInputSnapshot();
+  App::DT7InputState input;
+  input.online = true;
+  input.dial = App::InputConfig::kDialEmergencyThreshold;
+  input.right_switch = App::RemoteSwitchPosition::kDown;
+  input.left_y = 330;
+  input.left_x = -330;
+  input.right_x = 220;
+  input.right_y = -220;
+  input.keyboard_key_code = App::kDt7KeyW | App::kDt7KeyA;
+  input.mouse_x_delta = -330;
+  input.mouse_y_delta = 330;
+
+  input.left_switch = App::RemoteSwitchPosition::kUp;
+  App::ApplyDT7Input(input, latch, snapshot);
+  assert(snapshot.control_source == App::ControlSource::kRemote);
+  assert(snapshot.requested_motion_mode == App::MotionModeType::kSpin);
+  assert(snapshot.target_vx_mps > 0.0f);
+  assert(snapshot.target_vy_mps < 0.0f);
+  assert(snapshot.yaw_rate_degps > 0.0f);
+  assert(snapshot.pitch_rate_degps > 0.0f);
+  ExpectNear(snapshot.yaw_rate_degps,
+             App::InputConfig::kMaxYawRateDegps / 3.0f);
+  ExpectNear(snapshot.pitch_rate_degps,
+             App::InputConfig::kMaxPitchRateDegps / 3.0f);
+
+  input.left_switch = App::RemoteSwitchPosition::kMiddle;
+  App::ApplyDT7Input(input, latch, snapshot);
+  assert(snapshot.requested_motion_mode == App::MotionModeType::kFollowGimbal);
+
+  input.left_switch = App::RemoteSwitchPosition::kDown;
+  App::ApplyDT7Input(input, latch, snapshot);
   assert(snapshot.requested_motion_mode == App::MotionModeType::kIndependent);
 }
 
-void ExpectDT7KeyEdgesToggleAndDoNotRepeatWhileHeld() {
+void ExpectDT7RightSwitchMapsShootIntent() {
   App::InputLatchState latch;
   App::OperatorInputSnapshot snapshot = App::BuildSafeInputSnapshot();
   App::DT7InputState input;
   input.online = true;
-  input.left_switch = App::RemoteSwitchPosition::kUp;
+  input.dial = App::InputConfig::kDialEmergencyThreshold;
+  input.left_switch = App::RemoteSwitchPosition::kMiddle;
+
   input.right_switch = App::RemoteSwitchPosition::kUp;
-
-  input.keyboard_key_code =
-      App::kDt7KeyF | App::kDt7KeyZ | App::kDt7KeyE | App::kDt7KeyC |
-      App::kDt7KeyR;
   App::ApplyDT7Input(input, latch, snapshot);
   assert(snapshot.friction_enabled);
-  assert(snapshot.target_bullet_speed_mps == 18.0f);
-  assert(snapshot.requested_loader_mode == App::LoaderModeType::kSingle);
-  assert(snapshot.chassis_speed_scale == 0.6f);
-  assert(snapshot.lid_open);
-
-  App::ApplyDT7Input(input, latch, snapshot);
-  assert(snapshot.friction_enabled);
-  assert(snapshot.target_bullet_speed_mps == 18.0f);
-  assert(snapshot.requested_loader_mode == App::LoaderModeType::kSingle);
-  assert(snapshot.chassis_speed_scale == 0.6f);
-  assert(snapshot.lid_open);
-
-  input.keyboard_key_code = 0;
-  App::ApplyDT7Input(input, latch, snapshot);
-  input.keyboard_key_code =
-      App::kDt7KeyF | App::kDt7KeyZ | App::kDt7KeyE | App::kDt7KeyC |
-      App::kDt7KeyR;
-  App::ApplyDT7Input(input, latch, snapshot);
-  assert(!snapshot.friction_enabled);
-  assert(snapshot.target_bullet_speed_mps == 30.0f);
-  assert(snapshot.requested_loader_mode == App::LoaderModeType::kBurst);
-  assert(snapshot.chassis_speed_scale == 0.8f);
-  assert(!snapshot.lid_open);
-}
-
-void ExpectDT7KeyboardMouseMotionAndDeltas() {
-  App::InputLatchState latch;
-  App::OperatorInputSnapshot snapshot = App::BuildSafeInputSnapshot();
-  App::DT7InputState input;
-  input.online = true;
-  input.left_switch = App::RemoteSwitchPosition::kUp;
-  input.right_switch = App::RemoteSwitchPosition::kDown;
-  input.keyboard_key_code = App::kDt7KeyW | App::kDt7KeyA | App::kDt7KeyShift;
-  input.mouse_x_delta = 330;
-  input.mouse_y_delta = -330;
-  input.mouse_left_button = true;
-
-  App::ApplyDT7Input(input, latch, snapshot);
-  assert(snapshot.control_source == App::ControlSource::kKeyboardMouse);
-  assert(snapshot.target_vx_mps > 0.0f);
-  assert(snapshot.target_vy_mps > 0.0f);
-  assert(snapshot.yaw_delta_deg > 0.0f);
-  assert(snapshot.pitch_delta_deg < 0.0f);
-  assert(snapshot.power_boost_requested);
-  assert(snapshot.trigger_pressed);
   assert(snapshot.fire_enabled);
-}
+  assert(snapshot.requested_loader_mode == App::LoaderModeType::kContinuous);
+  assert(snapshot.ignore_referee_fire_gate);
+  assert(snapshot.target_shoot_rate_hz == App::InputConfig::kDefaultShootRateHz);
+  assert(snapshot.shoot_rate_scale == 1.0f);
 
-void ExpectOfflineClearsDT7ExecutionLatches() {
-  App::InputLatchState latch;
-  App::OperatorInputSnapshot snapshot = App::BuildSafeInputSnapshot();
-  App::DT7InputState input;
-  input.online = true;
-  input.left_switch = App::RemoteSwitchPosition::kUp;
-  input.right_switch = App::RemoteSwitchPosition::kUp;
-  input.keyboard_key_code =
-      App::kDt7KeyF | App::kDt7KeyE | App::kDt7KeyR;
-
+  input.right_switch = App::RemoteSwitchPosition::kMiddle;
   App::ApplyDT7Input(input, latch, snapshot);
   assert(snapshot.friction_enabled);
-  assert(snapshot.requested_loader_mode == App::LoaderModeType::kSingle);
-  assert(snapshot.lid_open);
-
-  input.online = false;
-  input.keyboard_key_code = 0;
-  App::ApplyDT7Input(input, latch, snapshot);
-  assert(snapshot.request_safe_mode);
-  assert(snapshot.emergency_latched);
-  assert(!snapshot.friction_enabled);
+  assert(!snapshot.fire_enabled);
   assert(snapshot.requested_loader_mode == App::LoaderModeType::kStop);
-  assert(!snapshot.lid_open);
+  assert(!snapshot.ignore_referee_fire_gate);
+  assert(snapshot.target_shoot_rate_hz == 0.0f);
+  assert(snapshot.shoot_rate_scale == 0.0f);
 
-  input.online = true;
-  input.right_switch = App::RemoteSwitchPosition::kUp;
+  input.right_switch = App::RemoteSwitchPosition::kDown;
   App::ApplyDT7Input(input, latch, snapshot);
   assert(!snapshot.friction_enabled);
+  assert(!snapshot.fire_enabled);
   assert(snapshot.requested_loader_mode == App::LoaderModeType::kStop);
-  assert(!snapshot.lid_open);
+  assert(!snapshot.ignore_referee_fire_gate);
 }
 
 void ExpectVT13ModesAndRequests() {
@@ -258,10 +284,10 @@ int main() {
   ExpectPrimarySourceWinsWhenOnline();
   ExpectSecondarySourceOnlyWhenPrimaryOffline();
   ExpectNoSourceWhenBothOffline();
-  ExpectDT7DialEmergencyLatchAndRightSwitchUpClears();
-  ExpectDT7KeyEdgesToggleAndDoNotRepeatWhileHeld();
-  ExpectDT7KeyboardMouseMotionAndDeltas();
-  ExpectOfflineClearsDT7ExecutionLatches();
+  ExpectDT7OfflineStaysSafeAndClearsExecutionIntent();
+  ExpectDT7DialSelectsManualOrSafe();
+  ExpectDT7LeftSwitchMapsMotionModesAndUsesSticks();
+  ExpectDT7RightSwitchMapsShootIntent();
   ExpectVT13ModesAndRequests();
   ExpectOfflineClearsVT13ExecutionLatches();
   return 0;

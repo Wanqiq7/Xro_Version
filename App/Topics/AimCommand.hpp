@@ -9,6 +9,8 @@ struct AimCommand {
   AimModeType aim_mode = AimModeType::kHold;
   float yaw_deg = 0.0f;
   float pitch_deg = 0.0f;
+  float yaw_rate_degps = 0.0f;
+  float pitch_rate_degps = 0.0f;
   bool track_target = false;
 };
 

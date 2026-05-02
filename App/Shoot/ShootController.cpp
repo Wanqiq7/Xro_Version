@@ -350,9 +350,11 @@ void ShootController::UpdateShootState() {
       BuildRefereeConstraintView(referee_state_);
   const bool robot_ready = IsRobotReady();
   const bool friction_enabled = ShouldEnableFriction(robot_ready);
+  const bool fire_gate_open =
+      fire_command_.referee_allows_fire || fire_command_.ignore_referee_fire_gate;
   const bool fire_enabled =
       friction_enabled && fire_command_.fire_enable && robot_mode_.fire_enable &&
-      referee_constraints.referee_allows_fire;
+      fire_gate_open;
   const LoaderModeType requested_loader_mode = ResolveLoaderMode(fire_enabled);
   const std::uint32_t now_ms = LibXR::Thread::GetTime();
   const auto& loader_feedback = loader_motor_.GetFeedback();

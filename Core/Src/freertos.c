@@ -52,7 +52,7 @@
 osThreadId_t defaultTaskHandle;
 const osThreadAttr_t defaultTask_attributes = {
   .name = "defaultTask",
-  .stack_size = 128 * 4,
+  .stack_size = 128 * 96,
   .priority = (osPriority_t) osPriorityNormal,
 };
 
@@ -123,6 +123,14 @@ void StartDefaultTask(void *argument)
 
 /* Private application code --------------------------------------------------*/
 /* USER CODE BEGIN Application */
+
+void vApplicationMallocFailedHook(void)
+{
+  /* 堆分配失败时停在这里，便于 J-Link/GDB 直接定位内存水位问题。 */
+  taskDISABLE_INTERRUPTS();
+  for (;;) {
+  }
+}
 
 /* USER CODE END Application */
 

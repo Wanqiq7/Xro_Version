@@ -35,6 +35,7 @@ struct InsState {
   float yaw_total_deg = 0.0f;
   std::array<float, 4> quaternion{1.0f, 0.0f, 0.0f, 0.0f};
   Vector3f gyro_bias_radps{};
+  Vector3f corrected_gyro_radps{};
   Vector3f motion_accel_body_g{};
   Vector3f motion_accel_nav_g{};
   Vector3f motion_accel_world_g{};

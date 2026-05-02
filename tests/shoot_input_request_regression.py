@@ -32,6 +32,59 @@ def test_fire_command_carries_discrete_shot_request_sequence() -> None:
     )
 
 
+def test_fire_command_carries_referee_fire_gate_override() -> None:
+    operator_input = read("App/Cmd/OperatorInputSnapshot.hpp")
+    fire_command = read("App/Topics/FireCommand.hpp")
+    decision = read("App/Cmd/DecisionController.cpp")
+    shoot_controller = read("App/Shoot/ShootController.cpp")
+
+    require(
+        "bool ignore_referee_fire_gate = false;" in operator_input,
+        "OperatorInputSnapshot 需要默认关闭裁判发射门控豁免",
+    )
+    require(
+        "bool ignore_referee_fire_gate = false;" in fire_command,
+        "FireCommand 需要默认关闭裁判发射门控豁免",
+    )
+    require(
+        "fire_command.ignore_referee_fire_gate = input.ignore_referee_fire_gate;"
+        in decision,
+        "DecisionController 需要把输入侧裁判发射门控豁免传递给 FireCommand",
+    )
+    require(
+        "constraints.referee_allows_fire || input.ignore_referee_fire_gate"
+        in decision,
+        "DecisionController 的发射门控应允许人工遥控豁免裁判发射许可",
+    )
+    require(
+        "constraints.referee_online && !input.ignore_referee_fire_gate"
+        in decision,
+        "裁判在线限频不应裁剪已明确豁免的人工遥控强制拨弹",
+    )
+    require(
+        "fire_command.fire_enable = input.fire_enabled && input.friction_enabled &&\n"
+        "                             fire_gate_open;"
+        in decision,
+        "DecisionController 的 fire_enable 应基于放行后的 fire_gate_open",
+    )
+    require(
+        "fire_command_.referee_allows_fire || fire_command_.ignore_referee_fire_gate"
+        in shoot_controller,
+        "ShootController 最终门控应保留 FireCommand 中的裁判门控豁免",
+    )
+    require(
+        "fire_command_.fire_enable && robot_mode_.fire_enable &&\n"
+        "      fire_gate_open"
+        in shoot_controller,
+        "ShootController 的 fire_enabled 不应再次只依赖真实裁判许可",
+    )
+    require(
+        "state_fire_command.referee_allows_fire = referee_constraints.referee_allows_fire;"
+        in shoot_controller,
+        "ShootController 发布状态估算时仍应记录真实裁判许可",
+    )
+
+
 def test_remote_mapper_generates_shot_request_on_trigger_rising_edge() -> None:
     mapper = read("App/Cmd/RemoteInputMapper.hpp")
 
@@ -112,6 +165,7 @@ def test_master_machine_host_override_maps_fire_semantics() -> None:
 
 def main() -> None:
     test_fire_command_carries_discrete_shot_request_sequence()
+    test_fire_command_carries_referee_fire_gate_override()
     test_remote_mapper_generates_shot_request_on_trigger_rising_edge()
     test_shoot_controller_queues_single_like_modes_by_request_sequence()
     test_master_machine_host_override_maps_fire_semantics()
