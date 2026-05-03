@@ -10,6 +10,7 @@ enum class HealthLevel : std::uint8_t {
   kWarning = 1,
   kFault = 2,
   kEmergencyStop = 3,
+  kDegraded = 4,
 };
 
 // 安全动作建议，由健康汇总逻辑给上层控制器消费。
@@ -19,6 +20,7 @@ enum class SafeAction : std::uint8_t {
   kDisableShoot = 2,
   kStopMotion = 3,
   kEmergencyStop = 4,
+  kForceSafeFire = 5,
 };
 
 // 系统故障位。故障通常需要触发降级、停机或人工介入。
@@ -29,6 +31,7 @@ enum class SystemHealthFault : std::uint32_t {
   kGimbalFault = 1u << 3,
   kShootFault = 1u << 4,
   kTopicStale = 1u << 5,
+  kChassisDead = 1u << 6,
 };
 
 // 系统告警位。告警表示能力缺失或数据不可用，但未必要求立即停机。
@@ -36,6 +39,8 @@ enum class SystemHealthWarning : std::uint32_t {
   kRefereeLost = 1u << 0,
   kSuperCapLost = 1u << 1,
   kCanBridgeLost = 1u << 2,
+  kVisionLost = 1u << 3,
+  kRefereeDataStale = 1u << 4,
 };
 
 // SystemHealth Topic：汇总输入、姿态、执行器和外部链路的健康状态。

@@ -34,6 +34,8 @@ class HealthController : public ControllerBase {
 
   void OnMonitor() override;
 
+  SystemHealth LatestHealth() const { return latest_health_; }
+
  private:
   void PullTopicData();
   SystemHealth BuildSystemHealth();
@@ -67,6 +69,8 @@ class HealthController : public ControllerBase {
   LibXR::Topic::ASyncSubscriber<RefereeState> referee_subscriber_;
   LibXR::Topic::ASyncSubscriber<SuperCapState> super_cap_subscriber_;
   LibXR::Topic::ASyncSubscriber<CANBridgeState> can_bridge_subscriber_;
+
+  SystemHealth latest_health_{};
 };
 
 }  // namespace App

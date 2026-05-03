@@ -9,6 +9,7 @@ static void XRobotMain(LibXR::HardwareContainer &hw) {
 
   while (true) {
     application_manager.MonitorAll();
+    runtime.FeedWatchdog();
     LibXR::Thread::Sleep(1);
   }
 }

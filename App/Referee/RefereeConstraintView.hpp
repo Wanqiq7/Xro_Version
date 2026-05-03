@@ -36,6 +36,12 @@ struct RefereeConstraintView {
   std::uint16_t shooter_heat_limit = 0;
   std::uint16_t shooter_heat = 0;
   std::uint16_t remaining_heat = 0;
+  std::uint16_t shooter_42mm_heat = 0;
+  std::uint16_t shooter_42mm_heat_limit = 0;
+  std::uint16_t remaining_42mm_heat = 0;
+  bool shooter_42mm_heat_valid = false;
+  float shooter_42mm_heat_ratio = 0.0f;
+  float remaining_42mm_heat_ratio = 0.0f;
   std::uint16_t robot_hp = 0;
   std::uint16_t buffer_energy = 0;
   std::uint16_t cooling_rate = 0;
@@ -44,6 +50,10 @@ struct RefereeConstraintView {
   std::uint8_t hurt_armor_id = 0;
   std::uint8_t hurt_type = 0;
   std::uint8_t remaining_energy_bits = 0;
+  std::uint8_t recovery_buff = 0;
+  std::uint8_t defence_buff = 0;
+  std::uint8_t vulnerability_buff = 0;
+  std::uint16_t attack_buff = 0;
   RefereeCampColor self_color = RefereeCampColor::kUnknown;
   RefereeCampColor enemy_color = RefereeCampColor::kUnknown;
 };
@@ -163,6 +173,8 @@ constexpr float ResolveMaxFireRateHz(const RefereeState& referee_state) {
       static_cast<std::uint16_t>(cooling_rate * 2U)) {
     return kMediumHeatFireRateHz;
   }
+  // TODO: 若 robot 类型允许使用 42mm，应同时检查 referee_state.shooter_42mm_heat_limit
+  // 和 remaining_42mm_heat 的热量约束，使用 std::min 取 17mm 与 42mm 发射速率的较小值。
   return kUnlimitedFireRateHz;
 }
 
@@ -212,6 +224,14 @@ constexpr RefereeConstraintView BuildRefereeConstraintView(
       .shooter_heat_limit = referee_state.shooter_heat_limit,
       .shooter_heat = referee_state.shooter_heat,
       .remaining_heat = referee_state.remaining_heat,
+      .shooter_42mm_heat = referee_state.shooter_42mm_heat,
+      .shooter_42mm_heat_limit = referee_state.shooter_42mm_heat_limit,
+      .remaining_42mm_heat = referee_state.remaining_42mm_heat,
+      .shooter_42mm_heat_valid = referee_state.shooter_42mm_heat_limit > 0U,
+      .shooter_42mm_heat_ratio =
+          ClampRatio(referee_state.shooter_42mm_heat, referee_state.shooter_42mm_heat_limit),
+      .remaining_42mm_heat_ratio = ClampRatio(referee_state.remaining_42mm_heat,
+                                              referee_state.shooter_42mm_heat_limit),
       .robot_hp = referee_state.robot_hp,
       .buffer_energy = referee_state.buffer_energy,
       .cooling_rate = cooling_rate,
@@ -220,6 +240,10 @@ constexpr RefereeConstraintView BuildRefereeConstraintView(
       .hurt_armor_id = referee_state.hurt_armor_id,
       .hurt_type = referee_state.hurt_type,
       .remaining_energy_bits = referee_state.remaining_energy_bits,
+      .recovery_buff = referee_state.recovery_buff,
+      .defence_buff = referee_state.defence_buff,
+      .vulnerability_buff = referee_state.vulnerability_buff,
+      .attack_buff = referee_state.attack_buff,
       .self_color = self_color,
       .enemy_color = ResolveEnemyCampColor(self_color),
   };

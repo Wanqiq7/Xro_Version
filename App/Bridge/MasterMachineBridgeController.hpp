@@ -3,7 +3,7 @@
 #include "../../Modules/MasterMachine/MasterMachine.hpp"
 #include "../../Modules/Referee/Referee.hpp"
 #include "../Robot/ControllerBase.hpp"
-#include "RefereeConstraintView.hpp"
+#include "../Referee/RefereeConstraintView.hpp"
 #include "../Topics/GimbalState.hpp"
 #include "../Topics/InsState.hpp"
 #include "../Topics/RobotMode.hpp"

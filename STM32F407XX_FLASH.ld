@@ -229,6 +229,18 @@ SECTIONS
   PROVIDE( __arm32_tls_tcb_offset = MAX(8, __tls_align) );
   PROVIDE( __arm64_tls_tcb_offset = MAX(16, __tls_align) );
 
+  /* FreeRTOS heap 不参与 DMA，放入 CCMRAM 释放普通 SRAM。
+     NOLOAD 不依赖启动清零；heap_4 会在首次 pvPortMalloc 时初始化堆元数据。 */
+  .freertos_heap (NOLOAD) :
+  {
+    . = ALIGN(8);
+    __freertos_heap_start__ = .;
+    KEEP(*(.freertos_heap))
+    KEEP(*(.freertos_heap*))
+    . = ALIGN(8);
+    __freertos_heap_end__ = .;
+  } >CCMRAM
+
   .bss (NOLOAD) : ALIGN(4)
   {
     *(.bss)

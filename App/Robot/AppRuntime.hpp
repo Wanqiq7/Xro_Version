@@ -1,9 +1,11 @@
 #pragma once
 
+#include "stm32f4xx_hal.h"
+
 #include "../Chassis/ChassisController.hpp"
 #include "../Cmd/DecisionController.hpp"
 #include "../Cmd/InputController.hpp"
-#include "../Cmd/MasterMachineBridgeController.hpp"
+#include "../Bridge/MasterMachineBridgeController.hpp"
 #include "../Gimbal/GimbalController.hpp"
 #include "../Health/HealthController.hpp"
 #include "../Shoot/ShootController.hpp"
@@ -31,6 +33,10 @@ class AppRuntime {
  public:
   AppRuntime(LibXR::HardwareContainer &hardware,
              LibXR::ApplicationManager &application_manager);
+
+  bool ShouldFeedWatchdog() const;
+
+  void FeedWatchdog();
 
  private:
   // --- Topic 基础设施 ---
@@ -89,6 +95,11 @@ class AppRuntime {
   DecisionController decision_controller_;                          // 执行顺序 3
   HealthController health_controller_;                              // 执行顺序 2
   InputController input_controller_;                                // 执行顺序 1
+
+  // --- 硬件看门狗（最后构造，所有模块就绪后启动）---
+  IWDG_HandleTypeDef iwdg_handle_{};
+  bool watchdog_ready_ = false;
+  bool watchdog_feed_failure_reported_ = false;
 };
 
 // Ozone 直接调试入口：指向真实运行中的 AppRuntime，不复制任何状态。

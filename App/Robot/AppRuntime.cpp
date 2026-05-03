@@ -32,6 +32,49 @@ constexpr float kBmi088HeatI = 20.0f / 2000.0f;
 constexpr float kBmi088HeatOutputLimit = 1.0f;
 constexpr float kBmi088TargetTemperatureC = 45.0f;
 
+// IWDG 看门狗参数
+// timeout_ms = 12000: 12s 超时，足够覆盖启动期对象构造 + 首周期 MonitorAll
+//                     同时保证系统挂死后在可接受时间内复位
+constexpr std::uint32_t kIWDGTimeoutMs = 12000;
+constexpr std::uint32_t kHealthHeartbeatTimeoutMs = 100;
+
+struct IwdgPrescalerOption {
+  std::uint32_t reg_value;
+  std::uint32_t divider;
+};
+
+bool ConfigureIwdg(IWDG_HandleTypeDef& handle, std::uint32_t timeout_ms) {
+  static constexpr IwdgPrescalerOption kOptions[] = {
+      {IWDG_PRESCALER_4, 4},     {IWDG_PRESCALER_8, 8},
+      {IWDG_PRESCALER_16, 16},   {IWDG_PRESCALER_32, 32},
+      {IWDG_PRESCALER_64, 64},   {IWDG_PRESCALER_128, 128},
+      {IWDG_PRESCALER_256, 256},
+  };
+
+  if (timeout_ms == 0u) {
+    return false;
+  }
+
+  for (const auto& option : kOptions) {
+    std::uint32_t reload =
+        (timeout_ms * LSI_VALUE) / (1000u * option.divider);
+    if (reload == 0u) {
+      reload = 1u;
+    }
+    if (reload > 1u) {
+      --reload;
+    }
+    if (reload <= 0x0FFFu) {
+      handle.Instance = IWDG;
+      handle.Init.Prescaler = option.reg_value;
+      handle.Init.Reload = reload;
+      return HAL_IWDG_Init(&handle) == HAL_OK;
+    }
+  }
+
+  return false;
+}
+
 }  // namespace
 
 namespace App {
@@ -168,6 +211,37 @@ AppRuntime::AppRuntime(LibXR::HardwareContainer &hardware,
                          referee_, super_cap_, can_bridge_),
       input_controller_(application_manager, operator_input_,
                         primary_remote_control_, vt13_,
-                        master_machine_) {}
+                        master_machine_),
+      iwdg_handle_{} {
+  // IWDG 只检测主循环健康心跳，不承载业务急停策略。
+  watchdog_ready_ = ConfigureIwdg(iwdg_handle_, kIWDGTimeoutMs);
+  if (!watchdog_ready_) {
+    XR_LOG_ERROR("IWDG init failed");
+  }
+}
+
+bool AppRuntime::ShouldFeedWatchdog() const {
+  SystemHealth health = health_controller_.LatestHealth();
+  const std::uint32_t last_update_ms = health.last_update_ms;
+  if (last_update_ms == 0u) {
+    return false;
+  }
+
+  const std::uint32_t now_ms =
+      static_cast<std::uint32_t>(LibXR::Timebase::GetMilliseconds());
+  return (now_ms - last_update_ms) <= kHealthHeartbeatTimeoutMs;
+}
+
+void AppRuntime::FeedWatchdog() {
+  if (!watchdog_ready_ || !ShouldFeedWatchdog()) {
+    return;
+  }
+
+  const HAL_StatusTypeDef result = HAL_IWDG_Refresh(&iwdg_handle_);
+  if (result != HAL_OK && !watchdog_feed_failure_reported_) {
+    watchdog_feed_failure_reported_ = true;
+    XR_LOG_ERROR("IWDG feed failed: %d", static_cast<int>(result));
+  }
+}
 
 }  // namespace App

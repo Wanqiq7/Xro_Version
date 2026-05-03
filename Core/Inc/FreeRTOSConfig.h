@@ -62,6 +62,7 @@
 #define configUSE_PREEMPTION                     1
 #define configSUPPORT_STATIC_ALLOCATION          1
 #define configSUPPORT_DYNAMIC_ALLOCATION         1
+#define configAPPLICATION_ALLOCATED_HEAP         1
 #define configUSE_MALLOC_FAILED_HOOK             1
 #define configUSE_IDLE_HOOK                      0
 #define configUSE_TICK_HOOK                      0

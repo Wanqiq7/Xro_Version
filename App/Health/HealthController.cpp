@@ -201,12 +201,20 @@ SystemHealth HealthController::BuildSystemHealth() {
     health.warning_flags |= ToFlag(SystemHealthWarning::kCanBridgeLost);
   }
 
+  if (health.referee_online &&
+      (referee_state_.robot_hp == 0u ||
+       referee_state_.chassis_power_limit_w <= 0.0f)) {
+    health.fault_flags |= ToFlag(SystemHealthFault::kChassisDead);
+    health.safe_action =
+        MaxSafeAction(health.safe_action, SafeAction::kStopMotion);
+  }
+
   if (health.emergency_stop_requested) {
     health.level = HealthLevel::kEmergencyStop;
   } else if (health.fault_flags != 0u) {
     health.level = HealthLevel::kFault;
   } else if (health.warning_flags != 0u) {
-    health.level = HealthLevel::kWarning;
+    health.level = HealthLevel::kDegraded;
   } else {
     health.level = HealthLevel::kOk;
   }
@@ -221,8 +229,8 @@ SystemHealth HealthController::BuildSystemHealth() {
 
 void HealthController::OnMonitor() {
   PullTopicData();
-  SystemHealth health = BuildSystemHealth();
-  system_health_topic_.Publish(health);
+  latest_health_ = BuildSystemHealth();
+  system_health_topic_.Publish(latest_health_);
 }
 
 }  // namespace App
